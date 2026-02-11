@@ -3,3 +3,9 @@ Installing Microsoft Visual Studio C++, installing DROID-SLAM
 error: Microsoft Visual C++ 14.0 or greater is required. Get it with "Microsoft C++ Build Tools": https://visualstudio.microsoft.com/visual-cpp-build-tools/
 
 Then I install a newer version, and cuda 11.7 doesn't work. What the fuck lol
+
+
+https://www.reddit.com/r/admincraft/comments/qo78be/creating_a_minecraft_server_with_oracle_cloud/
+
+
+need to reinstall hamer with new env. then clone new env to save. then try running opt script
