@@ -1,3 +1,6 @@
 [submodule "Dyn-HaMR"]
 	path = Dyn-HaMR
 	url = git@github.com:dnxjcui/Dyn-HaMR-Windows-Support.git
+[submodule "Hand-BMC-pytorch"]
+	path = Hand-BMC-pytorch
+	url = git@github.com:MengHao666/Hand-BMC-pytorch.git
