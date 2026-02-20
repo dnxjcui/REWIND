@@ -1,0 +1,3 @@
+[submodule "Dyn-HaMR"]
+	path = Dyn-HaMR
+	url = git@github.com:dnxjcui/Dyn-HaMR-Windows-Support.git
