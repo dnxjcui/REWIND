@@ -1,0 +1,30 @@
+# scene-reconstruction requirements
+# Use environment.yml to create the full conda environment.
+# This file lists pip-installable packages for reference.
+
+# Core (all included in environment.yml)
+numpy<2
+scipy>=1.11
+opencv-python>=4.8
+imageio>=2.31
+pillow>=10
+tqdm
+pyyaml
+
+# Scene reconstruction
+open3d>=0.18
+trimesh[easy]>=4.0
+smplx>=0.1.28
+
+# Depth Anything V2
+timm>=0.9
+transformers>=4.38
+huggingface_hub>=0.21
+
+# Optional — install manually:
+# SAM2 mask refinement:
+#   pip install git+https://github.com/facebookresearch/segment-anything-2
+#
+# NeuS2 requires CUDA compilation:
+#   git submodule update --init third-party/neus2
+#   cd third-party/neus2 && <see neus2 README>

@@ -1,0 +1,70 @@
+# ── Large binary outputs ──────────────────────────────────────────────────────
+*.glb
+*.ply
+*.obj
+*.fbx
+*.stl
+*.usd
+*.usdz
+
+# Videos
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.m4v
+*.wmv
+*.flv
+*.gif
+
+# Depth maps / numpy arrays
+*.npy
+*.npz
+
+# Archives
+*.tar.gz
+*.zip
+*.tar.bz2
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.mypy_cache/
+.ruff_cache/
+
+# ── Conda / virtualenv ────────────────────────────────────────────────────────
+.env
+.venv/
+env/
+venv/
+
+# ── Model checkpoints & weights ───────────────────────────────────────────────
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+*.h5
+checkpoints/
+_DATA/
+
+# ── Pipeline outputs ──────────────────────────────────────────────────────────
+outputs/
+scene-reconstruction/outputs/
+Dyn-HaMR/outputs/
+Dyn-HaMR/test/videos/
+Dyn-HaMR/test/images/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
+tmp.md

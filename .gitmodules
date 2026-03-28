@@ -4,3 +4,10 @@
 [submodule "Hand-BMC-pytorch"]
 	path = Hand-BMC-pytorch
 	url = git@github.com:MengHao666/Hand-BMC-pytorch.git
+[submodule "Dyn-HaMR/"]
+	url = git@github.com-nick:dnxjcui/Dyn-HaMR-Windows-Support.git
+[submodule "Hand-BMC-pytorch/"]
+	url = git@github.com-nick:MengHao666/Hand-BMC-pytorch.git
+[submodule "scene-reconstruction/third-party/Depth-Anything-V2"]
+	path = scene-reconstruction/third-party/Depth-Anything-V2
+	url = https://github.com/DepthAnything/Depth-Anything-V2

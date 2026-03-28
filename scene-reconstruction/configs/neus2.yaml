@@ -1,0 +1,32 @@
+# NeuS2 pipeline configuration.
+# Best for static or near-static scenes; produces cleaner SDF meshes than TSDF.
+# Requires CUDA-compiled NeuS2 in third-party/neus2/ (see README).
+
+# ── Dyn-HaMR output ───────────────────────────────────────────────────────────
+dynhamr:
+  log_dir: null          # required: path to run_opt hydra output dir
+  phase: smooth_fit      # subdirectory containing *_world_results.npz
+  video_path: null       # required: original video .mp4 for frame extraction
+  frames_dir: null       # optional: pre-extracted frames dir (skips extraction)
+
+# ── Frame selection ────────────────────────────────────────────────────────────
+frames:
+  stride: 2              # NeuS2 training is slow; stride 2 is a good default
+  start: 0
+  end: -1
+
+# ── NeuS2 training ────────────────────────────────────────────────────────────
+neus2:
+  repo_path: null        # null → auto-locate third-party/neus2 relative to script
+  n_steps: 20000         # training iterations; increase for higher quality
+  near: 0.01             # per-frame near bound (meters)
+  far: 10.0              # per-frame far bound (meters)
+  aabb_min: [-1.0, -1.0, -1.0]   # scene bounding box min (NeuS2 normalizes to this)
+  aabb_max: [ 1.0,  1.0,  1.0]   # scene bounding box max
+  mesh_resolution: 512   # marching cubes grid resolution for mesh extraction
+
+# ── Output ────────────────────────────────────────────────────────────────────
+output:
+  dir: null                        # null → <log_dir>/neus2_reconstruction/
+  transforms_filename: transforms.json
+  mesh_filename: scene_mesh.glb

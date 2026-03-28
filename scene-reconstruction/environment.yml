@@ -1,0 +1,39 @@
+name: scene-recon
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+
+  - pip:
+    # PyTorch with CUDA 11.8 (works on RTX 3090 / driver 580)
+    # Adjust index-url for your CUDA version if needed
+    - --extra-index-url https://download.pytorch.org/whl/cu118
+    - torch==2.1.2+cu118
+    - torchvision==0.16.2+cu118
+
+    # Numeric / image stack
+    - "numpy<2"
+    - scipy>=1.11
+    - opencv-python-headless>=4.8
+    - imageio>=2.31
+    - pillow>=10
+    - tqdm
+    - pyyaml
+
+    # Scene reconstruction core
+    - open3d>=0.18
+    - "trimesh[easy]>=4.0"
+    - smplx>=0.1.28
+
+    # Depth Anything V2 dependencies
+    - timm>=0.9
+    - transformers>=4.38
+    - huggingface_hub>=0.21
+
+    # Optional — install manually after `conda activate scene-recon`:
+    #   SAM2 mask refinement:
+    #     pip install git+https://github.com/facebookresearch/segment-anything-2
+    #
+    #   NeuS2 requires a separate CUDA compilation step:
+    #     see third-party/neus2/README.md
