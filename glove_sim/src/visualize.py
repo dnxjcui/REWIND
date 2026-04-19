@@ -95,6 +95,65 @@ def export_frame_glb(
     scene.export(str(out_path), file_type="glb")
 
 
+def export_glove_only_glb(
+    geom_poses: dict[str, tuple[np.ndarray, np.ndarray]],
+    out_path: str | Path,
+    mesh_dir: Path = MESH_DIR,
+    sensor_positions_ydown: np.ndarray | None = None,
+) -> None:
+    """Export a GLB containing only the glove mesh (no hand overlay).
+
+    Parameters
+    ----------
+    geom_poses            : {body_name: (pos_3, rotmat_3x3)} from get_geom_world_poses(), Y-down frame
+    out_path              : destination .glb file path
+    mesh_dir              : directory containing binary STL files
+    sensor_positions_ydown: (4, 3) sensor world positions in Y-down frame, or None
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    meshes = []
+
+    # Glove meshes: apply geom-level world transform, convert Y-down → Y-up
+    for link_name, stl_file in LINK_TO_STL.items():
+        pose = geom_poses.get(link_name)
+        if pose is None:
+            continue
+        pos, rot = pose
+
+        stl_path = mesh_dir / stl_file
+        if not stl_path.exists():
+            continue
+        try:
+            mesh = trimesh.load(str(stl_path), force="mesh")
+        except Exception:
+            continue
+
+        T_yd = np.eye(4)
+        T_yd[:3, :3] = rot
+        T_yd[:3,  3] = pos
+
+        T_yu = YDOWN_TO_YUP @ T_yd
+
+        mesh.apply_transform(T_yu)
+        meshes.append(mesh)
+
+    # Red sensor spheres
+    if sensor_positions_ydown is not None:
+        for pos_yd in sensor_positions_ydown:
+            pos_h = np.append(pos_yd, 1.0)
+            pos_yu = (YDOWN_TO_YUP @ pos_h)[:3]
+            meshes.append(_make_sensor_sphere(pos_yu))
+
+    if not meshes:
+        print(f"[WARNING] No meshes to export for {out_path}, skipping.")
+        return
+
+    scene = trimesh.Scene(meshes)
+    scene.export(str(out_path), file_type="glb")
+
+
 def export_frames(
     link_poses_seq: list[dict],
     frame_indices: list[int],
