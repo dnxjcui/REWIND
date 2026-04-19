@@ -53,18 +53,18 @@ SENSOR_JOINTS = {
     "index_platform": "revolute_5_0",  # index platform lateral sweep (near part_5)
 }
 
-# Sensor world-position data (for red dot visualization).
-# "Base" sensors are placed at the child-body origin of their joint (= joint axis location).
-SENSOR_BASE_BODIES = {
-    "thumb_base":     "part_2_1",  # child of revolute_3_0; Part1→Part2_1 junction
-    "index_base":     "part_2",    # child of revolute_7_0; Part1_1→Part2 junction
-    "index_platform": "part_5",    # physically on part_5 platform (reads revolute_5_0)
-}
+# Sensor world-position data: (body_name, offset_in_body_local_frame).
+# All offsets are in the body's own local frame (rotated by R_body before adding to xpos).
+# After the visual Rx(180°) flip, screws face the -Y body direction; offset (0, -0.004, 0)
+# places the dot 4 mm in the -Y local direction = next to the screws.
 import numpy as _np
-# Tip sensors: body origin ≈ geometric center of cap mesh (centroid ≈ 0 in body frame)
-SENSOR_TIP_OFFSETS = {
-    "thumb_tip": ("part_3",   _np.zeros(3)),
-    "index_tip": ("part_3_1", _np.zeros(3)),
+SENSOR_POSITIONS = {
+    "thumb_base":     ("part_2_1", _np.array([0.0,  -0.004,  0.0])),   # Part1→Part2_1 junction
+    "thumb_tip":      ("part_3",   _np.array([0.0,  -0.004,  0.0])),   # geometric center of thumb cap
+    "index_base":     ("part_2",   _np.array([0.0,  -0.004,  0.0])),   # Part1_1→Part2 junction
+    "index_tip":      ("part_3_1", _np.array([0.0,  -0.004,  0.0])),   # geometric center of index cap
+    # part_5 vis_origin ≈ [0.014, 0.074, -0.004] places dot at the free end of the platform
+    "index_platform": ("part_5",   _np.array([0.014, 0.074, -0.004])),
 }
 del _np
 SENSOR_SPHERE_RADIUS = 0.005  # 5 mm

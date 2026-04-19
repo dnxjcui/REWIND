@@ -507,22 +507,17 @@ class GloveSimulator:
         """Return (5, 3) sensor positions in MuJoCo Y-down world frame.
 
         Order: [thumb_base, thumb_tip, index_base, index_tip, index_platform].
-        Base sensors: at the child body origin of their joint (= joint axis location).
-        Tip sensors: at body origin (≈ geometric center of cap mesh, since centroid ≈ 0).
-        index_platform: at part_5 body origin (sensor physically on part_5 platform).
+        Each sensor is placed at: body_xpos + R_body @ local_offset.
+        Offsets (from SENSOR_POSITIONS) are in each body's own local frame;
+        (0, -0.004, 0) sits 4 mm in the -Y local direction = next to the screws.
         """
-        from config import SENSOR_BASE_BODIES, SENSOR_TIP_OFFSETS
+        from config import SENSOR_POSITIONS
         positions = []
         for label in ["thumb_base", "thumb_tip", "index_base", "index_tip", "index_platform"]:
-            if label in SENSOR_BASE_BODIES:
-                body_name = SENSOR_BASE_BODIES[label]
-                bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-                positions.append(self.data.xpos[bid].copy())
-            else:
-                body_name, local_offset = SENSOR_TIP_OFFSETS[label]
-                bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-                R = self.data.xmat[bid].reshape(3, 3)
-                positions.append(self.data.xpos[bid] + R @ local_offset)
+            body_name, local_offset = SENSOR_POSITIONS[label]
+            bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            R = self.data.xmat[bid].reshape(3, 3)
+            positions.append(self.data.xpos[bid] + R @ local_offset)
         return np.array(positions)
 
 

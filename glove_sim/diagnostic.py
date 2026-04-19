@@ -30,8 +30,11 @@ def main():
     out_dir = cfg.OUTPUT_DIR / "diagnostic"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Place glove at world origin with identity rotation
-    sim.set_base_pose(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
+    # 90° rotation around Z axis so the glove lies flat in the XZ plane.
+    # wxyz quaternion: [cos(45°), 0, 0, sin(45°)] = 90° around Z.
+    # If the result appears mirrored, try [0.707, 0.0, 0.0, -0.707] instead.
+    BASE_QUAT = np.array([0.707, 0.0, 0.0, 0.707])
+    sim.set_base_pose(np.zeros(3), BASE_QUAT)
     mujoco.mj_forward(sim.model, sim.data)
 
     # --- Rest pose (all joints at 0) ---
@@ -51,7 +54,7 @@ def main():
     for angle_deg in range(0, 91, 10):
         # Reset all joints to 0 first, then set only the index tip
         mujoco.mj_resetData(sim.model, sim.data)
-        sim.set_base_pose(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
+        sim.set_base_pose(np.zeros(3), BASE_QUAT)
         sim.data.qpos[idx_tip_qadr] = np.radians(angle_deg)
         mujoco.mj_forward(sim.model, sim.data)
 
