@@ -11,3 +11,9 @@
 [submodule "scene-reconstruction/third-party/Depth-Anything-V2"]
 	path = scene-reconstruction/third-party/Depth-Anything-V2
 	url = https://github.com/DepthAnything/Depth-Anything-V2
+[submodule "scene-reconstruction/third-party/neus2"]
+	path = scene-reconstruction/third-party/neus2
+	url = https://github.com/19reborn/NeuS2
+[submodule "holnd"]
+	path = holnd
+	url = https://github.com/zc-alexfan/hold.git

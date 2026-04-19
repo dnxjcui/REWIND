@@ -30,3 +30,4 @@ output:
   dir: null                        # null → <log_dir>/neus2_reconstruction/
   transforms_filename: transforms.json
   mesh_filename: scene_mesh.glb
+  per_frame: true                  # export frames/{i:06d}_scene.glb for each frame

@@ -276,3 +276,38 @@ class TSDFFusion:
         with open(out_path, "wb") as f:
             f.write(trimesh.exchange.gltf.export_glb(scene, include_normals=True))
         print(f"Saved scene mesh -> {out_path}")
+
+    def save_per_frame_glbs(
+        self,
+        frame_indices: list,
+        out_dir: str,
+    ) -> str:
+        """
+        Write scene_mesh.glb once, then create per-frame symlinks matching
+        Dyn-HaMR's hand GLB naming: frames/{i:06d}_scene.glb -> ../scene_mesh.glb
+
+        frame_indices are the 0-based frame indices that were integrated (used
+        as the numeric portion of the filename so scene and hand GLBs align).
+
+        Returns path to the frames/ directory.
+        """
+        import shutil
+
+        mesh_path = os.path.join(out_dir, "scene_mesh.glb")
+        if not os.path.exists(mesh_path):
+            self.save_mesh_glb(mesh_path)
+
+        frames_dir = os.path.join(out_dir, "frames")
+        os.makedirs(frames_dir, exist_ok=True)
+
+        for i in frame_indices:
+            link = os.path.join(frames_dir, f"{i:06d}_scene.glb")
+            if os.path.exists(link):
+                continue
+            try:
+                os.symlink("../scene_mesh.glb", link)
+            except OSError:
+                shutil.copy2(mesh_path, link)
+
+        print(f"Per-frame scene GLBs: {len(frame_indices)} links in {frames_dir}/")
+        return frames_dir

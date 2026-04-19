@@ -35,17 +35,18 @@ masking:
 
 # ── TSDF integration (Open3D VoxelBlockGrid) ──────────────────────────────────
 tsdf:
-  voxel_size: 0.006           # meters per voxel; ~6mm suits tabletop scenes
+  voxel_size: 0.004           # meters per voxel; 4mm for close-up shots (was 6mm)
   block_resolution: 16        # voxels per block edge
-  block_count: 50000          # initial hash map capacity (auto-expands)
+  block_count: 100000         # initial hash map capacity (was 50000)
   depth_scale: 1000.0         # depth_m * depth_scale → uint16 (mm units for Open3D)
-  depth_max: 5.0              # max integration depth (meters); should match depth.max_depth
+  depth_max: 3.0              # max integration depth (meters); 3m for close-up (was 5m)
   trunc_voxel_multiplier: 8.0 # truncation distance = voxel_size * this
-  weight_threshold: 3.0       # min cumulative weight for mesh extraction
+  weight_threshold: 1.0       # min cumulative weight for mesh extraction (was 3.0)
   device: CUDA:0              # Open3D device string; auto-falls-back to CPU:0
 
 # ── Output ────────────────────────────────────────────────────────────────────
 output:
   dir: null                   # null → <log_dir>/scene_reconstruction/
   mesh_filename: scene_mesh.glb
+  per_frame: true             # export frames/{i:06d}_scene.glb for each processed frame
   save_intermediate: false    # save per-frame depth .npy and mask .png

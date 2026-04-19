@@ -341,12 +341,22 @@ def main():
         print("NOTE: SAM2 refinement was requested but requires a two-pass integration.")
         print("      The current output uses MANO convex-hull masks.")
 
-    # Export mesh
+    # Export single merged mesh
     mesh_path = os.path.join(out_dir, cfg["output"]["mesh_filename"])
     fusion.save_mesh_glb(mesh_path)
 
+    # Per-frame GLBs: frames/{i:06d}_scene.glb → ../scene_mesh.glb
+    # Use 1-indexed frame numbers to match Dyn-HaMR hand GLBs (000001_hands.glb)
+    if cfg["output"].get("per_frame", True):
+        one_indexed = [i + 1 for i in indices]
+        frames_dir = fusion.save_per_frame_glbs(one_indexed, out_dir)
+    else:
+        frames_dir = None
+
     print(f"\nDone. Output: {out_dir}/")
     print(f"  {cfg['output']['mesh_filename']}")
+    if frames_dir:
+        print(f"  frames/  ({len(indices)} per-frame scene GLBs)")
     if save_intermediate:
         print(f"  depth/  (per-frame .npy)")
         print(f"  masks/  (per-frame .png)")

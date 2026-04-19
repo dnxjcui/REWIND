@@ -132,9 +132,16 @@ def main():
         Rs, ts, Ks, frame_paths, out_dir, img_w, img_h,
         stride=stride, start=start, end=end,
         mesh_filename=cfg["output"]["mesh_filename"],
+        per_frame=cfg["output"].get("per_frame", True),
     )
 
-    print(f"\nDone. Output: {output_glb}")
+    N = len(frame_paths)
+    stop = N if (end < 0 or end > N) else end
+    n_frames = len(list(range(start, stop, stride)))
+    print(f"\nDone. Output: {out_dir}/")
+    print(f"  {cfg['output']['mesh_filename']}")
+    if cfg["output"].get("per_frame", True):
+        print(f"  frames/  ({n_frames} per-frame scene GLBs)")
 
 
 if __name__ == "__main__":
