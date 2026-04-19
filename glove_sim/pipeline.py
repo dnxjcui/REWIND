@@ -11,6 +11,7 @@ Usage:
 import sys
 import argparse
 import numpy as np
+import mujoco
 from pathlib import Path
 from tqdm import tqdm
 
@@ -36,6 +37,8 @@ def parse_args():
                         "Uses default eyeballed calibration if not provided.")
     p.add_argument("--ik-iters", type=int, default=cfg.IK_ITERS)
     p.add_argument("--ik-tol", type=float, default=cfg.IK_TOL)
+    p.add_argument("--zero-qpos", action="store_true",
+                   help="Skip IK; hold all joints at 0 for rest-pose visualization debugging")
     return p.parse_args()
 
 
@@ -86,10 +89,11 @@ def main():
     # ------------------------------------------------------------------
     # Step 4: Per-frame IK loop
     # ------------------------------------------------------------------
-    sensor_angles      = np.zeros((T, 4), dtype=np.float32)
-    fingertip_positions = np.zeros((T, 2, 3), dtype=np.float32)
-    ik_residuals       = np.zeros(T, dtype=np.float32)
-    link_poses_seq     = [] if not args.no_vis else None
+    sensor_angles        = np.zeros((T, 5), dtype=np.float32)
+    fingertip_positions  = np.zeros((T, 2, 3), dtype=np.float32)
+    ik_residuals         = np.zeros(T, dtype=np.float32)
+    link_poses_seq       = [] if not args.no_vis else None
+    sensor_positions_seq = [] if not args.no_vis else None
 
     print("Running per-frame IK loop...")
     for seq_idx, t in enumerate(tqdm(frame_indices)):
@@ -110,17 +114,23 @@ def main():
         sim.set_base_pose(pos_base.astype(np.float64), quat_base)
 
         # Solve IK (warm-started: qpos carries over from previous frame)
-        residual = sim.solve_ik(
-            thumb_target, index_target,
-            n_iter=args.ik_iters, tol=args.ik_tol,
-        )
+        if not args.zero_qpos:
+            residual = sim.solve_ik(
+                thumb_target, index_target,
+                n_iter=args.ik_iters, tol=args.ik_tol,
+            )
+        else:
+            mujoco.mj_kinematics(sim.model, sim.data)
+            residual = 0.0
 
         sensor_angles[seq_idx]       = sim.read_sensor_angles()
         fingertip_positions[seq_idx] = [thumb_target, index_target]
         ik_residuals[seq_idx]        = residual
 
         if link_poses_seq is not None:
-            link_poses_seq.append(sim.get_link_world_poses())
+            link_poses_seq.append(sim.get_geom_world_poses())
+        if sensor_positions_seq is not None:
+            sensor_positions_seq.append(sim.get_sensor_world_positions())
 
     # ------------------------------------------------------------------
     # Step 5: Save sensor data
@@ -143,6 +153,7 @@ def main():
             link_poses_seq=link_poses_seq,
             frame_indices=frame_indices,
             frames_dir=cfg.FRAMES_DIR,
+            sensor_positions_seq=sensor_positions_seq,
         )
         print("Done.")
     else:

@@ -18,7 +18,7 @@ def save_sensor_data(
 
     Parameters
     ----------
-    sensor_angles      : (T, 4) raw joint angles [thumb_base, thumb_tip, index_base, index_tip]
+    sensor_angles      : (T, 5) raw joint angles [thumb_base, thumb_tip, index_base, index_tip, index_platform]
     fingertip_positions: (T, 2, 3) world positions [thumb_tip, index_tip]
     ik_residuals       : (T,) IK position error in meters after convergence
     calibration        : (4, 4) T_wrist_to_base transform used
@@ -55,7 +55,7 @@ def save_sensor_data(
         fingertip_distance=tip_dist.astype(np.float32),
         ik_residuals=ik_residuals.astype(np.float32),
         reliability_mask=reliability_mask,
-        sensor_labels=np.array(["thumb_base", "thumb_tip", "index_base", "index_tip"]),
+        sensor_labels=np.array(["thumb_base", "thumb_tip", "index_base", "index_tip", "index_platform"]),
         calibration=calibration.astype(np.float64),
         fps=np.float32(FPS),
     )
@@ -68,7 +68,7 @@ def _print_summary(angles, residuals, mask):
     print(f"  Reliable frames   : {mask.sum()} ({100*mask.mean():.1f}%)")
     print(f"  IK residual median: {np.median(residuals)*1000:.2f} mm")
     print(f"  IK residual max   : {np.max(residuals)*1000:.2f} mm")
-    labels = ["thumb_base", "thumb_tip", "index_base", "index_tip"]
+    labels = ["thumb_base", "thumb_tip", "index_base", "index_tip", "index_platform"]
     for i, lbl in enumerate(labels):
         mn, mx = angles[:, i].min(), angles[:, i].max()
         print(f"  {lbl:12s}: [{np.degrees(mn):.1f}°, {np.degrees(mx):.1f}°]")

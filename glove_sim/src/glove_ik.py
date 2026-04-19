@@ -440,7 +440,7 @@ class GloveSimulator:
         return None
 
     def read_sensor_angles(self) -> np.ndarray:
-        """Return the 4 sensor joint angles [thumb_base, thumb_tip, index_base, index_tip]."""
+        """Return 5 sensor joint angles [thumb_base, thumb_tip, index_base, index_tip, index_platform]."""
         return np.array([self.data.qpos[adr] for adr in self._sensor_qadr.values()])
 
     def get_link_world_poses(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
@@ -504,15 +504,16 @@ class GloveSimulator:
         return poses
 
     def get_sensor_world_positions(self) -> np.ndarray:
-        """Return (4, 3) sensor positions in MuJoCo Y-down world frame.
+        """Return (5, 3) sensor positions in MuJoCo Y-down world frame.
 
-        Order: [thumb_base, thumb_tip, index_base, index_tip].
-        Base sensors: at the child body origin of the base joint.
-        Tip sensors: at a local offset halfway along the fingertip cap mesh.
+        Order: [thumb_base, thumb_tip, index_base, index_tip, index_platform].
+        Base sensors: at the child body origin of their joint (= joint axis location).
+        Tip sensors: at body origin (≈ geometric center of cap mesh, since centroid ≈ 0).
+        index_platform: at part_5 body origin (sensor physically on part_5 platform).
         """
         from config import SENSOR_BASE_BODIES, SENSOR_TIP_OFFSETS
         positions = []
-        for label in ["thumb_base", "thumb_tip", "index_base", "index_tip"]:
+        for label in ["thumb_base", "thumb_tip", "index_base", "index_tip", "index_platform"]:
             if label in SENSOR_BASE_BODIES:
                 body_name = SENSOR_BASE_BODIES[label]
                 bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
