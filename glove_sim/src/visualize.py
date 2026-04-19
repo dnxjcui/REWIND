@@ -32,7 +32,7 @@ def export_frame_glb(
     frame_idx             : 0-based frame index
     geom_poses            : {body_name: (pos_3, rotmat_3x3)} from get_geom_world_poses(), Y-down frame
     out_path              : destination .glb file path
-    sensor_positions_ydown: (4, 3) sensor world positions in Y-down frame, or None
+    sensor_positions_ydown: (N, 3) sensor world positions in Y-down frame, or None
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,7 @@ def export_glove_only_glb(
     geom_poses            : {body_name: (pos_3, rotmat_3x3)} from get_geom_world_poses(), Y-down frame
     out_path              : destination .glb file path
     mesh_dir              : directory containing binary STL files
-    sensor_positions_ydown: (4, 3) sensor world positions in Y-down frame, or None
+    sensor_positions_ydown: (N, 3) sensor world positions in Y-down frame, or None
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +167,7 @@ def export_frames(
     link_poses_seq        : list of per-frame geom pose dicts from get_geom_world_poses()
     frame_indices         : corresponding original frame indices (for GLB filename lookup)
     frames_dir            : output directory
-    sensor_positions_seq  : list of (4, 3) sensor position arrays in Y-down frame, or None
+    sensor_positions_seq  : list of (N, 3) sensor position arrays in Y-down frame, or None
     """
     for seq_idx, frame_idx in enumerate(frame_indices):
         out_path = frames_dir / f"{frame_idx:06d}_glove_overlay.glb"
