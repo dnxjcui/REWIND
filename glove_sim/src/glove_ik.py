@@ -443,6 +443,23 @@ class GloveSimulator:
         """Return 5 sensor joint angles [thumb_base, thumb_tip, index_base, index_tip, index_platform]."""
         return np.array([self.data.qpos[adr] for adr in self._sensor_qadr.values()])
 
+    def read_all_joint_angles(self) -> dict[str, float]:
+        """Return {joint_name: angle_rad} for all revolute joints (for urdfpy FK)."""
+        cfg = {}
+        for jid in range(self.model.njnt):
+            jname = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, jid)
+            if jname and jname.startswith("revolute_"):
+                cfg[jname] = float(self.data.qpos[self.model.jnt_qposadr[jid]])
+        return cfg
+
+    def get_hand_mount_world_pose(self) -> np.ndarray:
+        """Return 4x4 world transform of hand_mount body in MuJoCo Y-down frame."""
+        bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "hand_mount")
+        T = np.eye(4)
+        T[:3, :3] = self.data.xmat[bid].reshape(3, 3)
+        T[:3,  3] = self.data.xpos[bid]
+        return T
+
     def get_link_world_poses(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         """Return {link_name: (pos_3, rotmat_3x3)} in MuJoCo world frame."""
         poses = {}

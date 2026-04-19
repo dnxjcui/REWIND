@@ -1,5 +1,7 @@
 """Standalone glove diagnostic: exports GLBs for visual inspection without DynHaMR data.
 
+Uses urdfpy for forward kinematics (correct URDF rpy handling) and trimesh for export.
+
 Usage:
     python diagnostic.py
 Outputs:
@@ -19,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config as cfg
 from src.glove_ik import GloveSimulator
-from src.visualize import export_glove_only_glb
+from src.urdfpy_vis import load_robot, get_glove_scene
 
 
 def main():
@@ -27,21 +29,25 @@ def main():
     sim = GloveSimulator(cfg.URDF_PATH, cfg.MESH_DIR)
     print(f"  nq={sim.model.nq}, nv={sim.model.nv}, nbody={sim.model.nbody}")
 
+    print("Loading URDF into urdfpy...")
+    robot = load_robot(cfg.URDF_PATH, cfg.MESH_DIR)
+    print(f"  urdfpy: {len(robot.links)} links, {len(robot.actuated_joints)} actuated joints")
+
     out_dir = cfg.OUTPUT_DIR / "diagnostic"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 90° rotation around Z axis so the glove lies flat in the XZ plane.
-    # wxyz quaternion: [cos(45°), 0, 0, sin(45°)] = 90° around Z.
-    # If the result appears mirrored, try [0.707, 0.0, 0.0, -0.707] instead.
-    BASE_QUAT = np.array([0.707, 0.0, 0.0, 0.707])
-    sim.set_base_pose(np.zeros(3), BASE_QUAT)
+    # Place glove at world origin with identity rotation
+    sim.set_base_pose(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
     mujoco.mj_forward(sim.model, sim.data)
 
     # --- Rest pose (all joints at 0) ---
-    geom_poses = sim.get_geom_world_poses()
+    joint_cfg = sim.read_all_joint_angles()
+    T_hm = sim.get_hand_mount_world_pose()
     sensor_pos = sim.get_sensor_world_positions()
+    scene = get_glove_scene(robot, joint_cfg, T_hm, sensor_positions_ydown=sensor_pos,
+                            sensor_sphere_radius=cfg.SENSOR_SPHERE_RADIUS)
     out_path = out_dir / "glove_rest.glb"
-    export_glove_only_glb(geom_poses, out_path, sensor_positions_ydown=sensor_pos)
+    scene.export(str(out_path))
     print(f"  Exported: {out_path}")
 
     # --- Index tip sweep: revolute_9_0 from 0° to 90° in 10° steps ---
@@ -52,16 +58,18 @@ def main():
     idx_tip_qadr = sim.model.jnt_qposadr[idx_tip_jid]
 
     for angle_deg in range(0, 91, 10):
-        # Reset all joints to 0 first, then set only the index tip
         mujoco.mj_resetData(sim.model, sim.data)
-        sim.set_base_pose(np.zeros(3), BASE_QUAT)
+        sim.set_base_pose(np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]))
         sim.data.qpos[idx_tip_qadr] = np.radians(angle_deg)
         mujoco.mj_forward(sim.model, sim.data)
 
-        geom_poses = sim.get_geom_world_poses()
+        joint_cfg = sim.read_all_joint_angles()
+        T_hm = sim.get_hand_mount_world_pose()
         sensor_pos = sim.get_sensor_world_positions()
+        scene = get_glove_scene(robot, joint_cfg, T_hm, sensor_positions_ydown=sensor_pos,
+                                sensor_sphere_radius=cfg.SENSOR_SPHERE_RADIUS)
         out_path = out_dir / f"glove_index_{angle_deg:03d}.glb"
-        export_glove_only_glb(geom_poses, out_path, sensor_positions_ydown=sensor_pos)
+        scene.export(str(out_path))
         print(f"  Exported: {out_path}  (index_tip={angle_deg}°)")
 
     print(f"\nDone. {len(list(out_dir.glob('*.glb')))} GLBs in {out_dir}")
