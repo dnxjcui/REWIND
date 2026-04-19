@@ -294,6 +294,9 @@ class GloveSimulator:
         free_jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "base_free")
         self._base_qadr = self.model.jnt_qposadr[free_jid]
 
+        # Build geom map for correct mesh placement in GLB export
+        self._body_geom_map = self._build_body_geom_map()
+
         # Initialize to neutral
         mujoco.mj_resetData(self.model, self.data)
         mujoco.mj_forward(self.model, self.data)
@@ -451,6 +454,75 @@ class GloveSimulator:
             rot = self.data.xmat[i].reshape(3, 3).copy()
             poses[name] = (pos, rot)
         return poses
+
+    def _build_body_geom_map(self) -> dict[str, int]:
+        """Map body name → first geom ID + precompute per-body visual origins.
+
+        MuJoCo normalizes mesh vertices by subtracting the mesh centroid
+        (model.mesh_pos), so geom_xpos/xmat reflect the centroid position, not
+        the mesh frame origin. We correct for this by precomputing:
+            vis_origin = model.geom_pos[gid] - model.mesh_pos[mesh_id]
+        which recovers the original URDF <visual><origin> xyz offset.
+        Stored in self._body_vis_origin for use in get_geom_world_poses().
+        """
+        mapping = {}
+        self._body_vis_origin: dict[str, np.ndarray] = {}
+        for geom_id in range(self.model.ngeom):
+            body_id = self.model.geom_bodyid[geom_id]
+            body_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+            if body_name and body_name not in mapping:
+                mapping[body_name] = geom_id
+                mesh_id = self.model.geom_dataid[geom_id]
+                if mesh_id >= 0:
+                    self._body_vis_origin[body_name] = (
+                        self.model.geom_pos[geom_id] - self.model.mesh_pos[mesh_id]
+                    )
+                else:
+                    self._body_vis_origin[body_name] = self.model.geom_pos[geom_id].copy()
+        return mapping
+
+    def get_geom_world_poses(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """Return {body_name: (pos_3, rotmat_3x3)} for placing STL meshes in world frame.
+
+        Uses body_xpos/xmat (not geom_xpos/xmat) because MuJoCo's mesh
+        normalization makes geom_xmat differ from body_xmat. The STL files are
+        un-normalized, so the correct world transform is:
+            rot = R_body
+            pos = body_xpos + R_body @ vis_origin
+        where vis_origin = URDF <visual><origin> xyz (= geom_pos - mesh_pos).
+        """
+        poses = {}
+        for body_name, geom_id in self._body_geom_map.items():
+            body_id = self.model.geom_bodyid[geom_id]
+            R_body = self.data.xmat[body_id].reshape(3, 3)
+            body_pos = self.data.xpos[body_id]
+            vis_origin = self._body_vis_origin.get(body_name, np.zeros(3))
+            poses[body_name] = (
+                (body_pos + R_body @ vis_origin).copy(),
+                R_body.copy(),
+            )
+        return poses
+
+    def get_sensor_world_positions(self) -> np.ndarray:
+        """Return (4, 3) sensor positions in MuJoCo Y-down world frame.
+
+        Order: [thumb_base, thumb_tip, index_base, index_tip].
+        Base sensors: at the child body origin of the base joint.
+        Tip sensors: at a local offset halfway along the fingertip cap mesh.
+        """
+        from config import SENSOR_BASE_BODIES, SENSOR_TIP_OFFSETS
+        positions = []
+        for label in ["thumb_base", "thumb_tip", "index_base", "index_tip"]:
+            if label in SENSOR_BASE_BODIES:
+                body_name = SENSOR_BASE_BODIES[label]
+                bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+                positions.append(self.data.xpos[bid].copy())
+            else:
+                body_name, local_offset = SENSOR_TIP_OFFSETS[label]
+                bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+                R = self.data.xmat[bid].reshape(3, 3)
+                positions.append(self.data.xpos[bid] + R @ local_offset)
+        return np.array(positions)
 
 
 # ---------------------------------------------------------------------------
