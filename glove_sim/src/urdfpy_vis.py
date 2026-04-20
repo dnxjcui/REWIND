@@ -112,6 +112,18 @@ def load_robot(urdf_path: Path, mesh_dir: Path):
     return robot
 
 
+def hand_mount_world_pose_for_root_identity() -> np.ndarray:
+    """Return hand-mount world pose that places URDF root at identity (Y-down).
+
+    `get_glove_scene` expects the hand-mount world pose as input. A common mistake
+    is passing URDF-root identity directly, which visually detaches components.
+    This helper provides the correct rest pose for root-at-origin comparisons.
+    """
+    t = np.eye(4, dtype=float)
+    t[:3, 3] = _ROOT_TO_HANDMOUNT_XYZ
+    return t
+
+
 def get_glove_scene(
     robot,
     joint_cfg: dict[str, float],
