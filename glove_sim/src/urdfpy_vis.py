@@ -156,33 +156,29 @@ def get_glove_scene(
     # World pose of URDF root (Y-down MuJoCo frame)
     T_root_world_yd = T_hand_mount_world @ T_hm_to_root
 
-    # Y-down → Y-up coordinate flip for GLB export
-    YDOWN_TO_YUP = np.array([
-        [1,  0,  0,  0],
-        [0,  0,  1,  0],
-        [0, -1,  0,  0],
-        [0,  0,  0,  1],
-    ], dtype=float)
+    # MANO world → DynHaMR GLB coordinate system: negate Z axis.
+    # DynHaMR unity_export GLBs store vertices as (X, Y, -Z) relative to MANO world.
+    MANO_TO_GLB = np.diag([1.0, 1.0, -1.0, 1.0])
 
     # urdfpy FK: {trimesh_mesh: T_4x4_from_urdf_root}
     fk = robot.visual_trimesh_fk(cfg=joint_cfg)
 
     meshes = []
     for mesh, T_from_root in fk.items():
-        # World transform in Y-down frame
+        # World transform in MANO world (Y-down) frame
         T_world_yd = T_root_world_yd @ T_from_root
-        # Convert to Y-up
-        T_world_yu = YDOWN_TO_YUP @ T_world_yd
+        # Convert to DynHaMR GLB space
+        T_world_glb = MANO_TO_GLB @ T_world_yd
 
         m = mesh.copy()
-        m.apply_transform(T_world_yu)
+        m.apply_transform(T_world_glb)
         meshes.append(m)
 
     # Red sensor spheres
     if sensor_positions_ydown is not None:
         for pos_yd in sensor_positions_ydown:
             pos_h = np.array([pos_yd[0], pos_yd[1], pos_yd[2], 1.0])
-            pos_yu = (YDOWN_TO_YUP @ pos_h)[:3]
+            pos_yu = (MANO_TO_GLB @ pos_h)[:3]
             sphere = trimesh.creation.icosphere(subdivisions=2, radius=sensor_sphere_radius)
             sphere.visual.face_colors = np.array([220, 20, 20, 255], dtype=np.uint8)
             T_s = np.eye(4)
