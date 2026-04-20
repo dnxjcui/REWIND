@@ -210,9 +210,10 @@ python glove_sim/align_sequence.py [--verify-frame N]   # default: 0
 
 ## Approval protocol
 
-1. Run `python glove_sim/align_frame.py` — tests must pass, inspect both GLBs
-2. Approve visually → run `python glove_sim/align_sequence.py` → verify single frame again → press Enter for full sequence
-3. No code changes between Phase 1 and Phase 2 runs unless something looks wrong
+1. Run `python glove_sim/align_frame.py` — tests must pass, GLBs exported
+2. **STOP. Do not proceed to Phase 2.** The implementer must wait for explicit manual approval from the user after they have reviewed the GLBs visually.
+3. Only after the user confirms the alignment looks correct: run `python glove_sim/align_sequence.py` → verify single frame again → press Enter for full sequence
+4. No code changes between Phase 1 and Phase 2 runs unless the user identifies a problem
 
 ---
 
