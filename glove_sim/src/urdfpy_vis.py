@@ -5,9 +5,8 @@ and returns a positioned trimesh.Scene for GLB export. Replaces the manual
 body-transform approach that was brittle against multi-axis joint RPY values.
 """
 
-import re
-import tempfile
 import os
+import tempfile
 import numpy as np
 import trimesh
 from pathlib import Path
@@ -22,7 +21,7 @@ np.str = str
 
 import xml.etree.ElementTree as ET
 
-_robot_cache: dict = {}   # keyed by (urdf_path, mesh_dir) so reloads only when paths change
+_robot_cache: dict = {}  # keyed by (urdf_path, mesh_dir)
 
 
 # Offset of hand_mount relative to URDF root link (from fixed_node_to_root_joint_0).
@@ -30,39 +29,84 @@ _robot_cache: dict = {}   # keyed by (urdf_path, mesh_dir) so reloads only when 
 _ROOT_TO_HANDMOUNT_XYZ = np.array([-0.157876, 0.0663838, -0.0660817])
 
 
+def _package_mesh_to_basename(fn: str) -> str:
+    """Strip ROS package://…/meshes/<file> down to <file>.stl."""
+    if not fn.startswith("package://"):
+        return fn
+    rest = fn.split("/", 2)[-1]
+    rest = rest.split("/", 1)[-1]
+    return rest.split("/", 1)[-1]
+
+
+def _prepare_urdf_tree_for_urdfpy(tree: ET.ElementTree, urdf_dir: Path, mesh_dir: Path) -> None:
+    """Mutate tree so mesh filenames work with urdfpy.URDF.load (same as get_filename).
+
+    urdfpy resolves mesh paths as ``os.path.join(urdf_directory, filename)`` when
+    ``filename`` is not absolute (see ``urdfpy.utils.get_filename``). ROS ``package://``
+    URIs are not supported upstream, so we rewrite them to paths relative to the URDF
+    folder — the same layout ``URDF.save`` documents (relative to the .urdf file).
+
+    Empty ``<texture/>`` placeholders (OnShape exports) are removed so Material parsing
+    does not try to load a texture without a filename.
+    """
+    urdf_dir = urdf_dir.resolve()
+    mesh_dir = mesh_dir.resolve()
+
+    for mesh_el in tree.getroot().iter("mesh"):
+        fn = mesh_el.get("filename", "")
+        if not fn:
+            continue
+        if fn.startswith("package://"):
+            base = _package_mesh_to_basename(fn)
+            abs_mesh = mesh_dir / base
+            rel = os.path.relpath(abs_mesh, start=urdf_dir)
+            mesh_el.set("filename", rel.replace("\\", "/"))
+        elif os.path.isabs(fn):
+            rel = os.path.relpath(Path(fn).resolve(), start=urdf_dir)
+            mesh_el.set("filename", rel.replace("\\", "/"))
+
+    for material in tree.getroot().iter("material"):
+        for tex in list(material.findall("texture")):
+            if not tex.attrib or not tex.get("filename"):
+                material.remove(tex)
+
+
 def load_robot(urdf_path: Path, mesh_dir: Path):
-    """Load and cache a urdfpy URDF robot with paths and numpy compat fixed."""
+    """Load urdfpy.URDF the same way ``URDF.load`` does, with ROS package paths fixed.
+
+    The returned object is identical to what you get after saving a URDF whose mesh
+    paths are relative to the ``.urdf`` directory. A short-lived temp file is written
+    **next to** ``urdf_path`` so relative paths resolve like upstream urdfpy.
+
+    For a checked-in URDF that already uses ``../meshes/...`` and valid materials,
+    you can call ``urdfpy.URDF.load`` directly on
+    ``rewind_glove_assembly/urdf/rewind_glove_for_urdfpy.urdf``.
+    """
     import urdfpy as _urdfpy
 
-    key = (str(urdf_path), str(mesh_dir))
+    urdf_path = urdf_path.resolve()
+    key = (str(urdf_path), str(mesh_dir.resolve()))
     if key in _robot_cache:
         return _robot_cache[key]
 
-    mesh_dir_abs = str(mesh_dir.resolve())
-
+    urdf_dir = urdf_path.parent
     tree = ET.parse(str(urdf_path))
-    root = tree.getroot()
+    _prepare_urdf_tree_for_urdfpy(tree, urdf_dir, mesh_dir)
 
-    for mesh in root.iter("mesh"):
-        fn = mesh.get("filename", "")
-        if fn.startswith("package://"):
-            fn = fn.split("/", 2)[-1]
-            fn = fn.split("/", 1)[-1]
-            fn = fn.split("/", 1)[-1]
-        mesh.set("filename", f"{mesh_dir_abs}/{fn}")
-
-    for material in root.iter("material"):
-        for tex in list(material.findall("texture")):
-            material.remove(tex)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".urdf", delete=False) as f:
-        tree.write(f, encoding="unicode")
-        tmp_path = f.name
-
+    fd, tmp_path = tempfile.mkstemp(
+        prefix="._urdfpy_load_",
+        suffix=".urdf",
+        dir=str(urdf_dir),
+    )
+    os.close(fd)
     try:
+        tree.write(tmp_path, encoding="utf-8", xml_declaration=True)
         robot = _urdfpy.URDF.load(tmp_path)
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     _robot_cache[key] = robot
     return robot

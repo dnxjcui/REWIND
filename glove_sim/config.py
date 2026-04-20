@@ -20,8 +20,8 @@ GLB_DIR = (
 MANO_DIR = DYNHAMR_ROOT / "_DATA/data"  # smplx appends /mano automatically
 
 URDF_PATH     = _ROOT.parent / "rewind_glove_assembly/urdf/rewind_glove_assembly.urdf"
-MESH_DIR_SRC  = _ROOT.parent / "rewind_glove_assembly/meshes"   # original ASCII STLs
-MESH_DIR      = _ROOT / "assets/meshes"                          # binary STLs for MuJoCo
+MESH_DIR_SRC  = _ROOT.parent / "rewind_glove_assembly/meshes"  # CAD exports (often ASCII STL)
+MESH_DIR      = _ROOT / "assets/meshes"  # binary STL for MuJoCo; populate via convert_meshes_for_mujoco.py
 
 OUTPUT_DIR       = _ROOT / "outputs"
 FRAMES_DIR       = OUTPUT_DIR / "frames"
