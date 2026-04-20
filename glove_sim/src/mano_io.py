@@ -3,6 +3,7 @@
 import numpy as np
 from pathlib import Path
 from scipy.spatial.transform import Rotation
+import trimesh
 
 # Patch deprecated numpy aliases before importing smplx/chumpy
 # chumpy does `from numpy import ..., unicode` which was removed in NumPy 1.24+
@@ -59,13 +60,19 @@ def load_frame(npz_path, mano_dir, frame_idx: int) -> dict:
 
     vertices = out.vertices[0].numpy().astype(np.float64)  # (778, 3)
 
+    # Compute outward vertex normals from the fixed MANO topology.
+    # trimesh averages adjacent face normals; MANO winding gives outward normals.
+    mano_mesh = trimesh.Trimesh(vertices=vertices, faces=model.faces, process=False)
+    vertex_normals = mano_mesh.vertex_normals.astype(np.float64)  # (778, 3), unit length
+
     T_wrist = np.eye(4, dtype=np.float64)
     T_wrist[:3, :3] = Rotation.from_rotvec(root_orient).as_matrix()
     T_wrist[:3,  3] = trans
 
     return {
-        "T_wrist":   T_wrist,
-        "thumb_tip": vertices[745].copy(),
-        "index_tip": vertices[317].copy(),
-        "vertices":  vertices,            # (778, 3) full MANO mesh, MANO world space
+        "T_wrist":        T_wrist,
+        "thumb_tip":      vertices[745].copy(),
+        "index_tip":      vertices[317].copy(),
+        "vertices":       vertices,         # (778, 3) full MANO mesh, MANO world space
+        "vertex_normals": vertex_normals,   # (778, 3) outward unit normals, MANO world space
     }

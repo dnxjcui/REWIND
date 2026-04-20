@@ -27,6 +27,15 @@ GLB_DIR = (
 
 ALIGNED_DIR = _GLOVE_SIM_ROOT / "outputs/aligned"
 
+# Derive the video name from the NPZ path segment, e.g. "knot_one_handed".
+# Annotation JSONs stay at ALIGNED_DIR root (shared across runs of the same video).
+# Per-frame outputs live under ALIGNED_DIR / VIDEO_NAME / {glb_frames,urdf_frames}.
+VIDEO_NAME = NPZ_PATH.parent.parent.name.split('-all-shot')[0]
+GLB_FRAMES_DIR  = ALIGNED_DIR / VIDEO_NAME / "glb_frames"
+URDF_FRAMES_DIR = ALIGNED_DIR / VIDEO_NAME / "urdf_frames"
+
+SEQUENCE_START = 18  # first usable frame (frames 0-17 are pre-task junk)
+
 IK_TOL                = 1e-6   # scipy ftol
 IK_MAX_NFEV           = 200
 IK_RESIDUAL_THRESHOLD = 0.005  # 5 mm
