@@ -19,6 +19,9 @@ import torch
 import smplx
 
 
+_model_cache: dict = {}
+
+
 def load_frame(npz_path, mano_dir, frame_idx: int) -> dict:
     """Load MANO data for one frame.
 
@@ -37,11 +40,15 @@ def load_frame(npz_path, mano_dir, frame_idx: int) -> dict:
     pose_body   = data["pose_body"][track, frame_idx].astype(np.float32).reshape(-1)  # (45,)
     betas       = data["betas"][track].astype(np.float32)                   # (10,)
 
-    model = smplx.create(
-        str(mano_dir), model_type="mano", is_rhand=True,
-        use_pca=False, num_betas=10, batch_size=1,
-    )
-    model.eval()
+    cache_key = str(mano_dir)
+    if cache_key not in _model_cache:
+        m = smplx.create(
+            str(mano_dir), model_type="mano", is_rhand=True,
+            use_pca=False, num_betas=10, batch_size=1,
+        )
+        m.eval()
+        _model_cache[cache_key] = m
+    model = _model_cache[cache_key]
     with torch.no_grad():
         out = model(
             hand_pose=torch.tensor(pose_body.reshape(1, 45), dtype=torch.float32),
