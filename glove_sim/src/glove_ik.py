@@ -565,6 +565,20 @@ def _inertial_xml(lnk: ET.Element) -> str:
     )
 
 
+def _rpy_to_quat_str(rpy_str: str) -> str:
+    """Convert URDF rpy (extrinsic XYZ: R = Rz(y) @ Ry(p) @ Rx(r)) to MuJoCo quat wxyz string."""
+    r, p, y = (float(x) for x in rpy_str.split())
+    cr, sr = np.cos(r / 2), np.sin(r / 2)
+    cp, sp = np.cos(p / 2), np.sin(p / 2)
+    cy, sy = np.cos(y / 2), np.sin(y / 2)
+    # quaternion product for Rz * Ry * Rx (extrinsic XYZ)
+    w = cr * cp * cy + sr * sp * sy
+    x = sr * cp * cy - cr * sp * sy
+    yq = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    return f"{w:.8f} {x:.8f} {yq:.8f} {z:.8f}"
+
+
 def _visual_geom_xml(lnk: ET.Element, mesh_dir_abs: str) -> str:
     visual = lnk.find("visual")
     if visual is None:
@@ -637,8 +651,9 @@ def _recursive_body(
         if child_jnt.find("parent").get("link") == link_name:
             children_xml += _recursive_body(child_name, links, joints_map, mesh_dir_abs)
 
+    quat_str = _rpy_to_quat_str(origin_rpy)
     return (
-        f'<body name="{link_name}" pos="{origin_xyz}" euler="{origin_rpy}">'
+        f'<body name="{link_name}" pos="{origin_xyz}" quat="{quat_str}">'
         f"  {inertia_xml}"
         f"  {joint_xml}"
         f"  {site_xml}"

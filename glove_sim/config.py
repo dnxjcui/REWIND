@@ -1,4 +1,5 @@
 from pathlib import Path
+import numpy as np
 
 _GLOVE_SIM_ROOT = Path(__file__).parent
 _PROJECT_ROOT   = _GLOVE_SIM_ROOT.parent

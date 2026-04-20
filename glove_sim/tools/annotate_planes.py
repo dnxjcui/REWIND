@@ -11,10 +11,13 @@ After both phases the script fits planes, computes the T_WRIST_TO_HM offset
 matrix, and writes everything to plane_annotation.json.
 
 Controls (same for both phases):
-  Left-click  — add a point on the mesh surface
-  U           — undo last point
-  S / Enter   — confirm selection (need >= 3 points)
-  Q           — quit / abort
+  Left-click           — add a point on the mesh surface
+  CTRL+Left-drag       — rotate camera
+  SHIFT+Left-drag      — pan camera
+  Right-drag / scroll  — zoom
+  U                    — undo last point
+  Enter                — confirm selection (need >= 3 points)
+  Q                    — quit / abort
 
 Usage:
   python glove_sim/tools/annotate_planes.py [--frame 300]
@@ -56,10 +59,8 @@ def _rotation_from_to(v_from, v_to):
     sin_a = np.linalg.norm(axis)
     cos_a = float(np.dot(v_from, v_to))
     if sin_a < 1e-9:
-        # Parallel or antiparallel
         if cos_a > 0:
             return np.eye(3)
-        # 180° rotation about a perpendicular axis
         perp = (np.array([1.0, 0.0, 0.0]) if abs(v_from[0]) < 0.9
                 else np.array([0.0, 1.0, 0.0]))
         axis = np.cross(v_from, perp)
@@ -98,7 +99,6 @@ def compute_T_wrist_to_hm(T_wrist, glove_centroid, glove_normal,
     T_hm_glb     = MANO_TO_GLB @ T_wrist
     T_hm_glb_inv = np.linalg.inv(T_hm_glb)
 
-    # Glove bottom plane in hand_mount LOCAL frame
     g_n  = np.asarray(glove_normal,   dtype=float); g_n /= np.linalg.norm(g_n)
     g_c  = np.asarray(glove_centroid, dtype=float)
     h_n  = np.asarray(hand_normal,    dtype=float); h_n /= np.linalg.norm(h_n)
@@ -107,55 +107,114 @@ def compute_T_wrist_to_hm(T_wrist, glove_centroid, glove_normal,
     g_n_local = T_hm_glb_inv[:3, :3] @ g_n
     g_c_local = (T_hm_glb_inv @ np.append(g_c, 1.0))[:3]
 
-    # Current glove bottom normal expressed in GLB (should ≈ g_n already)
     g_n_glb_current = T_hm_glb[:3, :3] @ g_n_local
 
-    # We want the glove bottom to face INTO the hand → antiparallel to h_n
+    # Glove bottom should face INTO the hand → antiparallel to hand dorsal normal
     target_g_n_glb = -h_n
 
-    # Rotation correction in GLB space
     R_corr = _rotation_from_to(g_n_glb_current, target_g_n_glb)
-
-    # New T_hand_mount rotation in GLB space
     R_new_glb = R_corr @ T_hm_glb[:3, :3]
-
-    # New translation so glove centroid sits on the dorsal surface
     P_new_glb = h_c - R_new_glb @ g_c_local
 
     T_hm_new_glb = np.eye(4, dtype=float)
     T_hm_new_glb[:3, :3] = R_new_glb
     T_hm_new_glb[:3,  3] = P_new_glb
 
-    # Convert back to MANO world (MANO_TO_GLB is its own inverse)
+    # MANO_TO_GLB is its own inverse (sign flip on Z)
     T_hm_new_mano = MANO_TO_GLB @ T_hm_new_glb
 
-    # Express as offset in wrist LOCAL frame
     T_offset = np.linalg.inv(T_wrist) @ T_hm_new_mano
     return T_offset
 
 
 # ---------------------------------------------------------------------------
-# Viewer with picking
+# Viewer with picking (pyrender-based, compatible with pyglet 2.x)
 # ---------------------------------------------------------------------------
 
-class PickingViewer(trimesh.viewer.SceneViewer):
-    """SceneViewer subclass that records left-click ray-mesh hit points."""
+class PickingViewer:
+    """Interactive mesh viewer that records left-click ray-mesh hit points.
+
+    Instantiating this class opens a window and BLOCKS until the window is
+    closed (confirm with Enter, abort with Q).  Results are available via
+    ``selected_points`` and ``aborted`` after the constructor returns.
+    """
 
     _MIN_POINTS = 3
 
-    def __init__(self, scene, target_mesh, phase_label, **kwargs):
-        super().__init__(scene, **kwargs)
-        self._target      = target_mesh
-        self._intersector = trimesh.ray.ray_triangle.RayMeshIntersector(target_mesh)
-        self._selected    = []   # list of [x, y, z]
-        self._aborted     = False
+    def __init__(self, trimesh_mesh, phase_label):
+        import pyrender
+
+        self._selected = []
+        self._aborted  = False
+        self._target   = trimesh_mesh
+        self._intersector = trimesh.ray.ray_triangle.RayMeshIntersector(trimesh_mesh)
+
         print(f"\n{'='*60}")
         print(f"  {phase_label}")
-        print(f"  Left-click  : add point on surface")
-        print(f"  U           : undo last point")
-        print(f"  S / Enter   : confirm (need >= {self._MIN_POINTS} points)")
-        print(f"  Q           : abort")
+        print(f"  Left-drag         : rotate camera")
+        print(f"  SHIFT+Left-drag   : pan camera")
+        print(f"  Scroll / Right-drag : zoom")
+        print(f"  Right-click (no drag) : ADD POINT on surface")
+        print(f"  U                 : undo last point")
+        print(f"  Enter             : confirm (need >= {self._MIN_POINTS} points)")
+        print(f"  Q                 : abort")
         print(f"{'='*60}\n")
+
+        # Build pyrender scene from the trimesh mesh
+        pr_scene = pyrender.Scene(bg_color=[0.1, 0.1, 0.1, 1.0],
+                                  ambient_light=[0.3, 0.3, 0.3])
+        pr_scene.add(pyrender.Mesh.from_trimesh(trimesh_mesh, smooth=False))
+        self._pr_scene = pr_scene
+
+        # Subclass approach: we need on_mouse_press/release overrides for picking.
+        # Build the viewer subclass inline so it can close over self.
+        picking_self = self
+
+        class _PV(pyrender.Viewer):
+            # Track right-click press position to distinguish click vs drag
+            _rpress_pos = None
+
+            def on_mouse_press(self_, x, y, buttons, modifiers):
+                import pyglet.window.mouse as _mouse
+                if buttons == _mouse.RIGHT:
+                    self_._rpress_pos = (x, y)
+                super().on_mouse_press(x, y, buttons, modifiers)
+
+            def on_mouse_release(self_, x, y, button, modifiers):
+                import pyglet.window.mouse as _mouse
+                if button == _mouse.RIGHT and self_._rpress_pos is not None:
+                    dx = abs(x - self_._rpress_pos[0])
+                    dy = abs(y - self_._rpress_pos[1])
+                    self_._rpress_pos = None
+                    if dx <= 4 and dy <= 4:   # click, not a drag
+                        picking_self._do_pick(self_, x, y)
+                        return   # don't pass to super — skip zoom-state release
+                super().on_mouse_release(x, y, button, modifiers)
+
+            def on_key_press(self_, symbol, modifiers):
+                import pyglet.window.key as _key
+                if symbol in (_key.ENTER, _key.RETURN, _key.NUM_ENTER):
+                    n = len(picking_self._selected)
+                    if n >= picking_self._MIN_POINTS:
+                        print(f"  Confirmed {n} points.")
+                        self_.on_close()
+                    else:
+                        print(f"  Need at least {picking_self._MIN_POINTS} "
+                              f"points (have {n}).")
+                elif symbol == _key.U:
+                    picking_self._cb_undo(self_)
+                elif symbol == _key.Q:
+                    picking_self._cb_abort(self_)
+                    self_.on_close()
+                else:
+                    super().on_key_press(symbol, modifiers)
+
+        # Instantiating _PV blocks until the window closes
+        self._viewer = _PV(
+            pr_scene,
+            use_raymond_lighting=True,
+            viewer_flags={'window_title': phase_label},
+        )
 
     # ---- public ----
 
@@ -163,129 +222,96 @@ class PickingViewer(trimesh.viewer.SceneViewer):
     def selected_points(self):
         return list(self._selected)
 
-    # ---- event handlers ----
+    @property
+    def aborted(self):
+        return self._aborted
 
-    def on_mouse_press(self, x, y, buttons, modifiers):
-        try:
-            import pyglet.window.mouse as mouse
-        except ImportError:
-            super().on_mouse_press(x, y, buttons, modifiers)
-            return
+    # ---- callbacks ----
 
-        if buttons & mouse.LEFT:
-            try:
-                origin, direction = self._pixel_to_ray(x, y)
-                locs, _, _ = self._intersector.intersects_location(
-                    ray_origins=origin[None],
-                    ray_directions=direction[None],
-                    multiple_hits=False,
-                )
-                if len(locs):
-                    pt = locs[0].tolist()
-                    self._selected.append(pt)
-                    print(f"  [{len(self._selected)}] ({pt[0]:.4f}, {pt[1]:.4f}, {pt[2]:.4f})")
-                    self._try_add_marker(np.array(pt))
-                else:
-                    print("  (no hit — click directly on the visible mesh surface)")
-            except Exception as exc:
-                print(f"  (pick error: {exc})")
+    def _cb_undo(self, viewer=None):
+        if self._selected:
+            self._selected.pop()
+            print(f"  Undone. {len(self._selected)} point(s) remain.")
         else:
-            super().on_mouse_press(x, y, buttons, modifiers)
+            print("  Nothing to undo.")
 
-    def on_key_press(self, symbol, modifiers):
+    def _cb_abort(self, viewer=None):
+        print("  Aborting.")
+        self._aborted = True
+        self._selected.clear()
+
+    # ---- picking ----
+
+    def _do_pick(self, viewer, px, py):
+        """Cast a ray from pixel (px, py) and record the first mesh hit."""
         try:
-            import pyglet.window.key as key
-        except ImportError:
-            super().on_key_press(symbol, modifiers)
-            return
-
-        if symbol in (key.ENTER, key.RETURN, key.S):
-            n = len(self._selected)
-            if n >= self._MIN_POINTS:
-                print(f"  Confirmed {n} points.")
-                self.close()
+            origin, direction = self._pixel_to_ray(viewer, px, py)
+            locs, _, _ = self._intersector.intersects_location(
+                ray_origins=origin[None],
+                ray_directions=direction[None],
+                multiple_hits=False,
+            )
+            if len(locs):
+                pt = locs[0].tolist()
+                self._selected.append(pt)
+                print(f"  [{len(self._selected)}] "
+                      f"({pt[0]:.4f}, {pt[1]:.4f}, {pt[2]:.4f})")
+                self._add_marker(viewer, np.array(pt))
             else:
-                print(f"  Need at least {self._MIN_POINTS} points (have {n}).")
-        elif symbol == key.U:
-            if self._selected:
-                self._selected.pop()
-                print(f"  Undone. {len(self._selected)} point(s) remain.")
-            else:
-                print("  Nothing to undo.")
-        elif symbol == key.Q:
-            print("  Aborting.")
-            self._aborted = True
-            self._selected.clear()
-            self.close()
-        else:
-            super().on_key_press(symbol, modifiers)
+                print("  (no hit — click directly on the visible mesh surface)")
+        except Exception as exc:
+            print(f"  (pick error: {exc})")
 
-    # ---- helpers ----
+    def _pixel_to_ray(self, viewer, px, py):
+        """Convert pyrender viewport pixel to world-space (origin, direction).
 
-    def _pixel_to_ray(self, px, py):
-        """Convert pyglet window pixel to world-space ray (origin, unit direction).
-
-        pyglet origin is bottom-left; y increases upward (same as OpenGL NDC).
-        trimesh camera looks down its local -Z axis.
+        pyrender / pyglet: origin is bottom-left; y increases upward.
+        Camera looks down its local -Z axis (OpenGL convention).
         """
-        T   = self.scene.camera_transform          # camera → world, (4, 4)
-        w, h = self.get_size()
-        cam  = self.scene.camera
+        import pyrender
+        T    = viewer._camera_node.matrix        # camera-to-world, (4, 4)
+        w, h = viewer.viewport_size
+        cam  = viewer._camera_node.camera
 
-        # Field of view
-        fov = cam.fov
-        if hasattr(fov, "__len__") and len(fov) >= 2:
-            fov_y_rad = np.radians(float(fov[1]))
-        else:
-            fov_y_rad = np.radians(float(fov))
+        yfov   = float(cam.yfov)                 # radians
+        aspect = w / h
+        half_h = np.tan(yfov / 2.0)
+        half_w = half_h * aspect
 
-        aspect   = w / h
-        half_h   = np.tan(fov_y_rad / 2.0)
-        half_w   = half_h * aspect
+        ndx = (2.0 * px / w) - 1.0              # [-1, 1]
+        ndy = (2.0 * py / h) - 1.0
 
-        ndx = (2.0 * px / w) - 1.0   # [-1, 1]
-        ndy = (2.0 * py / h) - 1.0   # [-1, 1]
-
-        # Camera-space ray (camera looks down -Z)
         d_cam = np.array([ndx * half_w, ndy * half_h, -1.0])
         d_cam /= np.linalg.norm(d_cam)
 
-        origin    = T[:3, 3]
+        origin    = T[:3, 3].copy()
         direction = T[:3, :3] @ d_cam
         direction /= np.linalg.norm(direction)
         return origin, direction
 
-    def _try_add_marker(self, pt):
-        """Add a small red sphere at pt; silently fail if the API is unavailable."""
+    def _add_marker(self, viewer, pt):
+        """Add a small red sphere at pt in the pyrender scene."""
         try:
+            import pyrender
             sphere = trimesh.creation.icosphere(subdivisions=2, radius=0.005)
             sphere.visual.face_colors = np.array([255, 60, 60, 220], dtype=np.uint8)
             T = np.eye(4); T[:3, 3] = pt
             sphere.apply_transform(T)
-            name = f"_pick_{len(self._selected)}"
-            self.scene.add_geometry(sphere, geom_name=name)
-            # Ask the viewer to rebuild its vertex buffers
-            if hasattr(self, "_update_vertex_list"):
-                self._update_vertex_list()
+            viewer.scene.add(pyrender.Mesh.from_trimesh(sphere, smooth=False))
         except Exception:
-            pass   # visual marker is cosmetic — don't crash if it fails
+            pass
 
 
 # ---------------------------------------------------------------------------
 # Per-phase helper
 # ---------------------------------------------------------------------------
 
-def pick_surface(mesh, phase_label):
-    """Open a viewer for one mesh, return list of selected points."""
-    import pyglet
-
-    scene  = trimesh.Scene([mesh])
-    viewer = PickingViewer(scene, mesh, phase_label)
-    pyglet.app.run()          # blocks until the window is closed
-
-    if viewer._aborted:
+def pick_surface(trimesh_mesh, phase_label):
+    """Open an interactive viewer for one mesh; return list of selected points."""
+    v = PickingViewer(trimesh_mesh, phase_label)
+    if v.aborted:
         return None
-    return viewer.selected_points
+    return v.selected_points
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +343,9 @@ def main():
         frame_data["index_tip"],
     )
 
-    # Glove: concatenate all glove link meshes into one pickable mesh
-    glove_scene  = get_glove_scene(robot, joint_cfg, frame_data["T_wrist"])
-    glove_mesh   = trimesh.util.concatenate(list(glove_scene.geometry.values()))
+    # Glove: all glove link meshes concatenated into one pickable mesh
+    glove_scene = get_glove_scene(robot, joint_cfg, frame_data["T_wrist"])
+    glove_mesh  = trimesh.util.concatenate(list(glove_scene.geometry.values()))
 
     # Hand: load directly from the per-frame GLB
     hand_glb = cfg.GLB_DIR / f"{args.frame:06d}_hands.glb"
@@ -362,9 +388,9 @@ def main():
     g_centroid, g_normal = fit_plane(g_pts)
     h_centroid, h_normal = fit_plane(h_pts)
 
-    cos_a   = abs(float(np.dot(g_normal, h_normal)))
-    angle   = float(np.degrees(np.arccos(min(1.0, cos_a))))
-    gap_m   = abs(float(np.dot(g_centroid - h_centroid, h_normal)))
+    cos_a = abs(float(np.dot(g_normal, h_normal)))
+    angle = float(np.degrees(np.arccos(min(1.0, cos_a))))
+    gap_m = abs(float(np.dot(g_centroid - h_centroid, h_normal)))
 
     print(f"\n{'='*60}")
     print(f"Glove bottom centroid : {g_centroid}")
