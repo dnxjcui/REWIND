@@ -26,7 +26,7 @@ _robot_cache: dict = {}  # keyed by (urdf_path, mesh_dir)
 
 # Offset of hand_mount relative to URDF root link (from fixed_node_to_root_joint_0).
 # Used to convert hand_mount world pose (from MuJoCo) into URDF-root world pose.
-_ROOT_TO_HANDMOUNT_XYZ = np.array([-0.157876, 0.0663838, -0.0660817])
+ROOT_TO_HANDMOUNT_XYZ = np.array([-0.157876, 0.0663838, -0.0660817])
 
 
 def _package_mesh_to_basename(fn: str) -> str:
@@ -120,7 +120,7 @@ def hand_mount_world_pose_for_root_identity() -> np.ndarray:
     This helper provides the correct rest pose for root-at-origin comparisons.
     """
     t = np.eye(4, dtype=float)
-    t[:3, 3] = _ROOT_TO_HANDMOUNT_XYZ
+    t[:3, 3] = ROOT_TO_HANDMOUNT_XYZ
     return t
 
 
@@ -148,10 +148,10 @@ def get_glove_scene(
     # URDF root → hand_mount is a fixed joint with xyz offset (rpy=0).
     # Invert to get hand_mount → root, then combine with hand_mount world pose.
     T_root_to_hm = np.eye(4)
-    T_root_to_hm[:3, 3] = _ROOT_TO_HANDMOUNT_XYZ
+    T_root_to_hm[:3, 3] = ROOT_TO_HANDMOUNT_XYZ
 
     T_hm_to_root = np.eye(4)
-    T_hm_to_root[:3, 3] = -_ROOT_TO_HANDMOUNT_XYZ  # pure translation, no rotation
+    T_hm_to_root[:3, 3] = -ROOT_TO_HANDMOUNT_XYZ  # pure translation, no rotation
 
     # World pose of URDF root (Y-down MuJoCo frame)
     T_root_world_yd = T_hand_mount_world @ T_hm_to_root
