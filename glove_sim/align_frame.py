@@ -61,7 +61,8 @@ def solve_ik_frame(robot, T_wrist, thumb_tip_world, index_tip_world,
     thumb_residual : float — Euclidean distance in metres
     index_residual : float — Euclidean distance in metres
     """
-    T_root_world = T_wrist @ _HM_TO_ROOT
+    # Apply calibrated wrist→hand_mount offset, then hand_mount→root
+    T_root_world = T_wrist @ cfg.T_WRIST_TO_HM @ _HM_TO_ROOT
     inv_T = np.linalg.inv(T_root_world)
 
     thumb_target = (inv_T @ np.append(thumb_tip_world, 1.0))[:3]
@@ -95,7 +96,8 @@ def _export_frame(robot, T_wrist, joint_cfg, frame_idx):
     """Export combined hand+glove GLB for one frame."""
     from src.urdfpy_vis import get_glove_scene
 
-    glove_scene = get_glove_scene(robot, joint_cfg, T_wrist)
+    T_hand_mount = T_wrist @ cfg.T_WRIST_TO_HM
+    glove_scene = get_glove_scene(robot, joint_cfg, T_hand_mount)
     meshes = list(glove_scene.geometry.values())
 
     hand_glb = cfg.GLB_DIR / f"{frame_idx:06d}_hands.glb"

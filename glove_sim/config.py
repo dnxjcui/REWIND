@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import numpy as np
 import numpy as np
 
 _GLOVE_SIM_ROOT = Path(__file__).parent
@@ -28,3 +30,14 @@ ALIGNED_DIR = _GLOVE_SIM_ROOT / "outputs/aligned"
 IK_TOL                = 1e-6   # scipy ftol
 IK_MAX_NFEV           = 200
 IK_RESIDUAL_THRESHOLD = 0.005  # 5 mm
+
+# T_WRIST_TO_HM is loaded automatically from plane_annotation.json.
+# Re-run annotate_planes.py to update it; no manual edits needed.
+_ANNOTATION_PATH = ALIGNED_DIR / "plane_annotation.json"
+if _ANNOTATION_PATH.exists():
+    T_WRIST_TO_HM = np.array(
+        json.loads(_ANNOTATION_PATH.read_text())["T_WRIST_TO_HM"],
+        dtype=np.float64,
+    )
+else:
+    T_WRIST_TO_HM = np.eye(4, dtype=np.float64)  # identity until first annotation

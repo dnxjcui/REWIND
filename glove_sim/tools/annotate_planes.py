@@ -2,22 +2,30 @@
 """
 glove_sim/tools/annotate_planes.py
 
-Two-phase interactive annotation tool for glove-hand plane alignment.
+Five-phase interactive annotation tool for glove-hand plane alignment.
 
-Phase 1: shows the GLOVE mesh alone — click the flat underside of the Hand Mount.
-Phase 2: shows the HAND mesh alone — click the dorsal (back) surface above the knuckles.
+Phase 1: GLOVE FRONT — flat bottom of Hand Mount, knuckle-side edge
+Phase 2: GLOVE BACK  — flat bottom of Hand Mount, wrist-side edge
+Phase 3: GLOVE TOP   — top of Hand Mount (linkage/sensor side, faces AWAY from hand)
+Phase 4: HAND FRONT  — dorsal hand surface above the knuckles
+Phase 5: HAND BACK   — dorsal hand surface near the wrist
 
-After both phases the script fits planes, computes the T_WRIST_TO_HM offset
-matrix, and writes everything to plane_annotation.json.
+The glove TOP annotation resolves the normal-direction ambiguity: the vector
+from bottom-centroid to top-centroid unambiguously points away from the hand,
+so the flat bottom can be flipped correctly without going through the hand.
+Two sub-regions per surface pin the remaining in-plane rotation (6 DOF total).
 
-Controls (same for both phases):
-  Left-click           — add a point on the mesh surface
-  CTRL+Left-drag       — rotate camera
-  SHIFT+Left-drag      — pan camera
-  Right-drag / scroll  — zoom
-  U                    — undo last point
-  Enter                — confirm selection (need >= 3 points)
-  Q                    — quit / abort
+After all five phases the script fits planes, computes T_WRIST_TO_HM,
+and writes everything to plane_annotation.json.
+
+Controls (same for all phases):
+  Right-click (no drag) — add a point on the mesh surface
+  Left-drag             — rotate camera
+  SHIFT+Left-drag       — pan camera
+  Scroll / Right-drag   — zoom
+  U                     — undo last point
+  Enter                 — confirm selection (need >= 3 points)
+  Q                     — quit / abort
 
 Usage:
   python glove_sim/tools/annotate_planes.py [--frame 300]
@@ -73,58 +81,147 @@ def _rotation_from_to(v_from, v_to):
     return np.eye(3) + sin_a * K + (1 - cos_a) * (K @ K)
 
 
-def compute_T_wrist_to_hm(T_wrist, glove_centroid, glove_normal,
-                           hand_centroid, hand_normal):
-    """Compute the T_WRIST_TO_HM offset matrix.
+def _ortho_frame(z_vec, x_hint):
+    """Build a 3×3 orthonormal matrix whose columns are [x, y, z].
 
-    Finds the rigid transform (in the wrist local frame) such that when
-    applied to the wrist pose, the glove bottom plane aligns flush with the
-    hand dorsal plane.
+    z is normalised z_vec; x is x_hint projected onto the plane ⟂ z; y = z×x.
+    """
+    z = np.asarray(z_vec,  dtype=float); z /= np.linalg.norm(z)
+    x = np.asarray(x_hint, dtype=float)
+    x = x - np.dot(x, z) * z              # project out z component
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    return np.column_stack([x, y, z])      # columns are basis vectors
+
+
+def _get_glove_bottom_geometry_local():
+    """Extract flat-bottom centroid, normal, and in-plane PCA axis from Hand Mount STL.
+
+    All results are in the hand_mount link's local frame (= HM rest frame).
+    g_n_local is oriented to point TOWARD the linkage/body side (away from hand).
+    g_axis_local_raw is the long PCA axis of the bottom face vertices (sign ambiguous).
+    """
+    _ROOT_IN_HM = np.array([0.157876, -0.0663838, 0.0660817])
+    root_dir    = _ROOT_IN_HM / np.linalg.norm(_ROOT_IN_HM)
+
+    mesh_path = cfg.MESH_DIR / "Hand Mount.stl"
+    mesh = trimesh.load(str(mesh_path), force='mesh')
+
+    # Bottom faces: face normals pointing AWAY from the linkage/root direction.
+    dots = mesh.face_normals @ root_dir
+    for thresh in (-0.7, -0.5, -0.3, 0.0):
+        bottom_mask = dots < thresh
+        if bottom_mask.sum() >= 3:
+            break
+    if bottom_mask.sum() < 3:
+        raise RuntimeError(
+            f"Could not find flat-bottom faces in {mesh_path}. "
+            "Check MESH_DIR and mesh orientation."
+        )
+    print(f"  [mesh] {bottom_mask.sum()} bottom faces found (dot threshold {thresh:.1f})")
+
+    bottom_verts = mesh.vertices[mesh.faces[bottom_mask].ravel()]
+    g_c_local = bottom_verts.mean(axis=0)
+
+    # Normal: mean of bottom face normals, oriented toward linkage side.
+    g_n_raw = mesh.face_normals[bottom_mask].mean(axis=0)
+    g_n_raw /= np.linalg.norm(g_n_raw)
+    if np.dot(g_n_raw, root_dir) < 0:
+        g_n_raw = -g_n_raw          # ensure it points toward linkages (away from hand)
+    g_n_local = g_n_raw
+
+    # In-plane long axis via PCA of bottom vertices projected onto the bottom plane.
+    vp = bottom_verts - g_c_local
+    vp = vp - (vp @ g_n_local)[:, None] * g_n_local
+    _, _, Vt = np.linalg.svd(vp, full_matrices=False)
+    g_axis_local_raw = Vt[0]       # first PC = long axis (sign ambiguous)
+
+    return g_c_local, g_n_local, g_axis_local_raw
+
+
+def compute_T_wrist_to_hm(T_wrist, T_wrist_to_hm_prev,
+                           glove_front_pts, glove_back_pts, glove_top_pts,
+                           hand_front_pts,  hand_back_pts):
+    """Compute the T_WRIST_TO_HM offset matrix from plane annotations.
+
+    The glove bottom geometry (centroid + normal + in-plane axis) is extracted
+    directly from the Hand Mount STL mesh in its own local frame, so the result
+    is completely independent of T_wrist_to_hm_prev (which may be grossly wrong).
 
     Parameters
     ----------
-    T_wrist        : (4,4) wrist world transform (MANO world / Y-down)
-    glove_centroid : (3,)  centre of glove bottom plane in GLB space
-    glove_normal   : (3,)  unit normal of glove bottom plane in GLB space
-    hand_centroid  : (3,)  centre of hand dorsal plane in GLB space
-    hand_normal    : (3,)  unit normal of hand dorsal plane in GLB space
+    T_wrist           : (4,4) wrist world transform (MANO world / Y-down)
+    T_wrist_to_hm_prev: unused — kept for API compatibility
+    glove_front_pts   : (N,3) knuckle-side edge of glove flat bottom (GLB space)
+    glove_back_pts    : (M,3) wrist-side edge of glove flat bottom (GLB space)
+    glove_top_pts     : unused — kept for API compatibility
+    hand_front_pts    : (N,3) knuckle area of hand dorsal (GLB space)
+    hand_back_pts     : (M,3) wrist area of hand dorsal (GLB space)
 
     Returns
     -------
-    T_offset : (4,4) transform in the wrist LOCAL frame
+    T_offset : (4,4) transform in the wrist LOCAL frame  (= T_WRIST_TO_HM)
+    g_c, g_n : glove bottom centroid and normal in GLB space (g_c == h_c by construction)
+    h_c, h_n : hand dorsal centroid and (toward-glove) normal in GLB space
     """
     MANO_TO_GLB = np.diag([1.0, 1.0, -1.0, 1.0])
 
-    # Current T_hand_mount in GLB space (T_offset = identity)
-    T_hm_glb     = MANO_TO_GLB @ T_wrist
-    T_hm_glb_inv = np.linalg.inv(T_hm_glb)
+    # --- Hand dorsal plane from annotation (all in GLB space) ---
+    all_hand  = np.vstack([hand_front_pts, hand_back_pts])
+    h_c, h_n  = fit_plane(all_hand)
 
-    g_n  = np.asarray(glove_normal,   dtype=float); g_n /= np.linalg.norm(g_n)
-    g_c  = np.asarray(glove_centroid, dtype=float)
-    h_n  = np.asarray(hand_normal,    dtype=float); h_n /= np.linalg.norm(h_n)
-    h_c  = np.asarray(hand_centroid,  dtype=float)
+    h_front_c = np.asarray(hand_front_pts, dtype=float).mean(axis=0)
+    h_back_c  = np.asarray(hand_back_pts,  dtype=float).mean(axis=0)
 
-    g_n_local = T_hm_glb_inv[:3, :3] @ g_n
-    g_c_local = (T_hm_glb_inv @ np.append(g_c, 1.0))[:3]
+    def _proj(vec, normal):
+        v = np.asarray(vec, dtype=float)
+        n = np.asarray(normal, dtype=float); n /= np.linalg.norm(n)
+        return v - np.dot(v, n) * n
 
-    g_n_glb_current = T_hm_glb[:3, :3] @ g_n_local
+    h_axis = _proj(h_back_c - h_front_c, h_n)
 
-    # Glove bottom should face INTO the hand → antiparallel to hand dorsal normal
-    target_g_n_glb = -h_n
+    # --- Glove bottom geometry from URDF mesh (T_prev-independent) ---
+    g_c_local, g_n_local, g_axis_local_raw = _get_glove_bottom_geometry_local()
 
-    R_corr = _rotation_from_to(g_n_glb_current, target_g_n_glb)
-    R_new_glb = R_corr @ T_hm_glb[:3, :3]
-    P_new_glb = h_c - R_new_glb @ g_c_local
+    # --- Orient g_axis_local to match the annotated glove front→back direction ---
+    # We project g_axis_local to GLB space using only the normal-alignment rotation
+    # (no translation, no T_prev) and compare with the annotation-based axis.
+    all_glove    = np.vstack([glove_front_pts, glove_back_pts])
+    g_c_annot, g_n_annot = fit_plane(all_glove)
+    g_axis_annot = _proj(
+        np.asarray(glove_back_pts,  dtype=float).mean(axis=0)
+        - np.asarray(glove_front_pts, dtype=float).mean(axis=0),
+        g_n_annot,
+    )
+    R_z = _rotation_from_to(g_n_local, h_n)   # rotation that aligns normals only
+    if np.dot(R_z @ g_axis_local_raw, g_axis_annot) < 0:
+        g_axis_local_raw = -g_axis_local_raw
+    g_axis_local = g_axis_local_raw
 
+    # --- Orient h_n toward the glove (away from hand body interior) ---
+    if np.dot(h_n, g_c_annot - h_c) < 0:
+        h_n = -h_n
+
+    # --- Build orthonormal frames and rotation ---
+    # Both z-axes point "away from hand surface" → they should align directly.
+    F_src = _ortho_frame(g_n_local, g_axis_local)   # HM local frame
+    F_tgt = _ortho_frame(h_n,       h_axis)          # hand GLB frame
+    R_new = F_tgt @ F_src.T
+
+    # --- T_hm_new_glb: maps HM-local → GLB, placing flat-bottom centroid at h_c ---
     T_hm_new_glb = np.eye(4, dtype=float)
-    T_hm_new_glb[:3, :3] = R_new_glb
-    T_hm_new_glb[:3,  3] = P_new_glb
+    T_hm_new_glb[:3, :3] = R_new
+    T_hm_new_glb[:3,  3] = h_c - R_new @ g_c_local
 
-    # MANO_TO_GLB is its own inverse (sign flip on Z)
-    T_hm_new_mano = MANO_TO_GLB @ T_hm_new_glb
-
+    # --- Convert to wrist-local offset ---
+    T_hm_new_mano = MANO_TO_GLB @ T_hm_new_glb   # MANO_TO_GLB is self-inverse
     T_offset = np.linalg.inv(T_wrist) @ T_hm_new_mano
-    return T_offset
+
+    # --- GLB-space glove bottom for annotation storage ---
+    g_c_glb = R_new @ g_c_local + T_hm_new_glb[:3, 3]   # == h_c by construction
+    g_n_glb = R_new @ g_n_local
+
+    return T_offset, g_c_glb, g_n_glb, h_c, h_n
 
 
 # ---------------------------------------------------------------------------
@@ -326,67 +423,104 @@ def main():
                         help="Frame to use for annotation (default: 300)")
     parser.add_argument("--out",   type=Path,
                         default=cfg.ALIGNED_DIR / "plane_annotation.json")
+    parser.add_argument("--recompute", action="store_true",
+                        help="Recompute T_WRIST_TO_HM from existing annotation without re-annotating")
     args = parser.parse_args()
 
-    # ---- Prepare meshes ----
-    print("Loading MANO frame data and computing IK…")
-    from src.urdfpy_vis import load_robot, get_glove_scene
-    from src.mano_io    import load_frame
-    from align_frame    import solve_ik_frame
+    if args.recompute:
+        # ---- Recompute from saved annotation (no interactive session needed) ----
+        if not args.out.exists():
+            print(f"ERROR: no annotation found at {args.out}")
+            print("Run without --recompute first to create an annotation.")
+            sys.exit(1)
+        print(f"Loading existing annotation from {args.out} …")
+        existing    = json.loads(args.out.read_text())
+        T_wrist     = np.array(existing["T_wrist"], dtype=float)
+        g_front_pts = np.array(existing["glove_front"]["points"], dtype=float)
+        g_back_pts  = np.array(existing["glove_back"]["points"],  dtype=float)
+        g_top_pts   = np.array(
+            existing.get("glove_top", existing["glove_front"])["points"], dtype=float
+        )
+        h_front_pts = np.array(existing["hand_front"]["points"], dtype=float)
+        h_back_pts  = np.array(existing["hand_back"]["points"],  dtype=float)
+        frame_idx   = existing["frame"]
+    else:
+        # ---- Interactive annotation ----
+        print("Loading MANO frame data and computing IK…")
+        from src.urdfpy_vis import load_robot, get_glove_scene
+        from src.mano_io    import load_frame
+        from align_frame    import solve_ik_frame
 
-    frame_data = load_frame(cfg.NPZ_PATH, cfg.MANO_DIR, args.frame)
-    robot      = load_robot(cfg.URDF_PATH, cfg.MESH_DIR)
-    joint_cfg, _, _ = solve_ik_frame(
-        robot,
-        frame_data["T_wrist"],
-        frame_data["thumb_tip"],
-        frame_data["index_tip"],
-    )
+        frame_data = load_frame(cfg.NPZ_PATH, cfg.MANO_DIR, args.frame)
+        robot      = load_robot(cfg.URDF_PATH, cfg.MESH_DIR)
+        joint_cfg, _, _ = solve_ik_frame(
+            robot,
+            frame_data["T_wrist"],
+            frame_data["thumb_tip"],
+            frame_data["index_tip"],
+        )
 
-    # Glove: all glove link meshes concatenated into one pickable mesh
-    glove_scene = get_glove_scene(robot, joint_cfg, frame_data["T_wrist"])
-    glove_mesh  = trimesh.util.concatenate(list(glove_scene.geometry.values()))
+        T_hand_mount = frame_data["T_wrist"] @ cfg.T_WRIST_TO_HM
+        glove_scene  = get_glove_scene(robot, joint_cfg, T_hand_mount)
+        glove_mesh   = trimesh.util.concatenate(list(glove_scene.geometry.values()))
 
-    # Hand: load directly from the per-frame GLB
-    hand_glb = cfg.GLB_DIR / f"{args.frame:06d}_hands.glb"
-    if not hand_glb.exists():
-        print(f"ERROR: hand GLB not found: {hand_glb}")
-        print("Run align_frame.py first to generate aligned outputs.")
-        sys.exit(1)
-    hand_scene = trimesh.load(str(hand_glb), force="scene")
-    hand_mesh  = trimesh.util.concatenate(list(hand_scene.geometry.values()))
+        hand_glb = cfg.GLB_DIR / f"{args.frame:06d}_hands.glb"
+        if not hand_glb.exists():
+            print(f"ERROR: hand GLB not found: {hand_glb}")
+            print("Run align_frame.py first to generate the hand GLB.")
+            sys.exit(1)
+        hand_scene = trimesh.load(str(hand_glb), force="scene")
+        hand_mesh  = trimesh.util.concatenate(list(hand_scene.geometry.values()))
 
-    print(f"Glove mesh: {len(glove_mesh.faces)} faces")
-    print(f"Hand  mesh: {len(hand_mesh.faces)} faces")
+        print(f"Glove mesh: {len(glove_mesh.faces)} faces")
+        print(f"Hand  mesh: {len(hand_mesh.faces)} faces")
 
-    # ---- Phase 1: glove bottom ----
-    print("\nPhase 1 of 2: GLOVE BOTTOM")
-    print("Click the flat underside of the Hand Mount (opposite the linkages/sensors).")
-    glove_pts = pick_surface(
-        glove_mesh,
-        "Phase 1 — GLOVE BOTTOM: click the flat underside of the Hand Mount",
-    )
-    if not glove_pts or len(glove_pts) < 3:
-        print("Annotation aborted or too few points.  Exiting.")
-        sys.exit(1)
+        def _require(pts, phase):
+            if not pts or len(pts) < 3:
+                print(f"Annotation aborted or too few points in {phase}.  Exiting.")
+                sys.exit(1)
+            return np.array(pts, dtype=float)
 
-    # ---- Phase 2: hand dorsal ----
-    print("\nPhase 2 of 2: HAND DORSAL SURFACE")
-    print("Click the back of the hand above the knuckle area (dorsal metacarpal surface).")
-    hand_pts = pick_surface(
-        hand_mesh,
-        "Phase 2 — HAND DORSAL: click the back of the hand above the knuckles",
-    )
-    if not hand_pts or len(hand_pts) < 3:
-        print("Annotation aborted or too few points.  Exiting.")
-        sys.exit(1)
+        # Phase 1: glove FRONT (knuckle-side edge of flat bottom)
+        print("\nPhase 1 of 4: GLOVE FRONT EDGE")
+        print("Click the knuckle-side edge of the flat underside of the Hand Mount.")
+        g_front_pts = _require(
+            pick_surface(glove_mesh,
+                         "Phase 1/4 — GLOVE FRONT: knuckle-side edge of flat bottom"),
+            "Phase 1")
 
-    # ---- Fit planes ----
-    g_pts = np.array(glove_pts, dtype=float)
-    h_pts = np.array(hand_pts,  dtype=float)
+        # Phase 2: glove BACK (wrist-side edge of flat bottom)
+        print("\nPhase 2 of 4: GLOVE BACK EDGE")
+        print("Click the wrist-side edge of the flat underside of the Hand Mount.")
+        g_back_pts = _require(
+            pick_surface(glove_mesh,
+                         "Phase 2/4 — GLOVE BACK: wrist-side edge of flat bottom"),
+            "Phase 2")
 
-    g_centroid, g_normal = fit_plane(g_pts)
-    h_centroid, h_normal = fit_plane(h_pts)
+        # Phase 3: hand FRONT (dorsal above knuckles)
+        print("\nPhase 3 of 4: HAND DORSAL FRONT")
+        print("Click the dorsal hand surface just above the knuckles.")
+        h_front_pts = _require(
+            pick_surface(hand_mesh,
+                         "Phase 3/4 — HAND FRONT: dorsal surface above knuckles"),
+            "Phase 3")
+
+        # Phase 4: hand BACK (dorsal near wrist)
+        print("\nPhase 4 of 4: HAND DORSAL BACK")
+        print("Click the dorsal hand surface near the wrist.")
+        h_back_pts = _require(
+            pick_surface(hand_mesh,
+                         "Phase 4/4 — HAND BACK: dorsal surface near wrist"),
+            "Phase 4")
+
+        T_wrist   = np.array(frame_data["T_wrist"], dtype=float)
+        g_top_pts = g_front_pts   # unused placeholder
+        frame_idx = args.frame
+
+    # ---- Compute T_WRIST_TO_HM ----
+    T_offset, g_centroid, g_normal, h_centroid, h_normal = compute_T_wrist_to_hm(
+        T_wrist, cfg.T_WRIST_TO_HM,
+        g_front_pts, g_back_pts, g_top_pts, h_front_pts, h_back_pts)
 
     cos_a = abs(float(np.dot(g_normal, h_normal)))
     angle = float(np.degrees(np.arccos(min(1.0, cos_a))))
@@ -400,13 +534,7 @@ def main():
     print(f"Angle between normals : {angle:.1f}°  (target < 15°)")
     print(f"Gap between planes    : {gap_m*1000:.1f} mm  (target < 5 mm)")
 
-    # ---- Compute T_WRIST_TO_HM ----
-    T_wrist  = np.array(frame_data["T_wrist"], dtype=float)
-    T_offset = compute_T_wrist_to_hm(T_wrist, g_centroid, g_normal,
-                                     h_centroid, h_normal)
-
     print(f"\nComputed T_WRIST_TO_HM:")
-    print(repr(T_offset.tolist()))
     print("\nPaste into glove_sim/config.py as:")
     print("  T_WRIST_TO_HM = np.array(")
     for row in T_offset:
@@ -416,15 +544,20 @@ def main():
 
     # ---- Save ----
     annotation = {
-        "frame": args.frame,
+        "frame": frame_idx,
         "T_wrist": T_wrist.tolist(),
+        "glove_front": {"points": g_front_pts.tolist()},
+        "glove_back":  {"points": g_back_pts.tolist()},
+        "hand_front":  {"points": h_front_pts.tolist()},
+        "hand_back":   {"points": h_back_pts.tolist()},
+        # Combined fits (used by test_plane_alignment.py)
         "glove_bottom": {
-            "points":   glove_pts,
+            "points":   np.vstack([g_front_pts, g_back_pts]).tolist(),
             "centroid": g_centroid.tolist(),
             "normal":   g_normal.tolist(),
         },
         "hand_dorsal": {
-            "points":   hand_pts,
+            "points":   np.vstack([h_front_pts, h_back_pts]).tolist(),
             "centroid": h_centroid.tolist(),
             "normal":   h_normal.tolist(),
         },
