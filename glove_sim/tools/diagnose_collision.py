@@ -30,25 +30,30 @@ from align_frame import (
     _THUMB_COLLISION_LINKS, _INDEX_COLLISION_LINKS,
     _THUMB_Q0_CANDIDATES, _INDEX_Q0_CANDIDATES,
     _JOINT_BOUNDS, _HM_TO_ROOT, _MANO_TO_GLB,
-    _COLLISION_MARGIN, _COLLISION_WEIGHT,
+    _COLLISION_MARGIN, _COLLISION_WEIGHT, _COLLISION_LATERAL_CUTOFF,
+    _COLLISION_PROXIES,
     _compute_T_root_world,
 )
 
 
 # ---------------------------------------------------------------------------
-# Per-link signed-distance reporter
+# Per-link signed-distance reporter (uses proxy points, same as IK solver)
 # ---------------------------------------------------------------------------
 
 def _link_distances(robot, chain_joints, joint_cfg, collision_links,
                     plane_normal_root, plane_centroid_root):
-    """Return {link_name: signed_dist_mm} for tracked links."""
+    """Return {link_name: (signed_dist_mm, lateral_mm, suppressed)} for tracked links."""
     fk = robot.link_fk(cfg=joint_cfg)
     dists = {}
     for link, T in fk.items():
         if link.name in collision_links:
-            pos = T[:3, 3]
-            d = float(np.dot(pos - plane_centroid_root, plane_normal_root)) * 1000
-            dists[link.name] = d
+            proxy_local = _COLLISION_PROXIES.get(link.name, np.zeros(3))
+            pos = T[:3, :3] @ proxy_local + T[:3, 3]
+            v = pos - plane_centroid_root
+            d = float(np.dot(v, plane_normal_root))
+            lateral = float(np.linalg.norm(v - d * plane_normal_root))
+            suppressed = lateral > _COLLISION_LATERAL_CUTOFF
+            dists[link.name] = (d * 1000, lateral * 1000, suppressed)
     return dists
 
 
@@ -67,21 +72,29 @@ def _run_ik(robot, chain_joints, tip_link_name, visual_origin,
     def residual(q_vec):
         fk = robot.link_fk(cfg=dict(zip(chain_joints, q_vec)))
         ik_err = np.full(3, 1e6)
-        link_pos = {}
+        link_T = {}
         for link, T in fk.items():
             if link.name == tip_link_name:
                 ik_err = T[:3, :3] @ visual_origin + T[:3, 3] - target_in_root
             elif link.name in collision_links:
-                link_pos[link.name] = T[:3, 3]
+                link_T[link.name] = T
         penalty = np.zeros(n_pen)
         if plane_normal_root is not None and collision_weight > 0:
             for i, lname in enumerate(collision_links):
-                pos = link_pos.get(lname)
-                if pos is None:
+                T = link_T.get(lname)
+                if T is None:
                     continue
-                d = float(np.dot(pos - plane_centroid_root, plane_normal_root))
-                if d < _COLLISION_MARGIN:
-                    penalty[i] = collision_weight * (_COLLISION_MARGIN - d)
+                proxy_local = _COLLISION_PROXIES.get(lname, np.zeros(3))
+                pos = T[:3, :3] @ proxy_local + T[:3, 3]
+                v = pos - plane_centroid_root
+                d = float(np.dot(v, plane_normal_root))
+                if d >= _COLLISION_MARGIN:
+                    continue
+                lateral = float(np.linalg.norm(v - d * plane_normal_root))
+                if lateral > _COLLISION_LATERAL_CUTOFF:
+                    continue
+                penetration = _COLLISION_MARGIN - d
+                penalty[i] = collision_weight * (penetration ** 2)
         return np.concatenate([ik_err, penalty])
 
     best_x, best_res = None, np.inf
@@ -144,8 +157,8 @@ def main():
     parser.add_argument("--frame", type=int, default=300,
                         help="Frame index to test (default: 300)")
     parser.add_argument("--weights", nargs="+", type=float,
-                        default=[0.0, 1.0, 5.0, 8.0, 20.0, 50.0],
-                        help="Collision weights to sweep")
+                        default=[0.0, 100.0, 500.0, 2000.0, 5000.0, 20000.0],
+                        help="Collision weights to sweep (quadratic: penalty=W*pen^2)")
     args = parser.parse_args()
 
     frame_idx = args.frame
@@ -177,10 +190,10 @@ def main():
 
     hand_glb = cfg.GLB_DIR / f"{frame_idx:06d}_hands.glb"
 
-    col_w = 18
     print(f"\n{'Weight':>8}  {'Thumb res':>10}  {'Index res':>10}  "
-          f"{'Part6 dist':>10}  {'XL horn dist':>12}  {'Mesh collide':>12}")
-    print("-" * 80)
+          f"{'Part6 prx':>10}  {'XLhous prx':>12}  {'Mesh collide':>12}")
+    print(f"  (penalty = W * penetration^2, lateral cutoff={_COLLISION_LATERAL_CUTOFF*1000:.0f}mm)")
+    print("-" * 85)
 
     for w in args.weights:
         thumb_cfg, thumb_res = _run_ik(
@@ -194,16 +207,15 @@ def main():
 
         joint_cfg = {**thumb_cfg, **index_cfg}
 
-        # Per-link distances
-        t_dists = _link_distances(robot, _THUMB_CHAIN, joint_cfg,
-                                  _THUMB_COLLISION_LINKS,
-                                  plane_normal_root, plane_centroid_root)
+        # Per-link distances (proxy-based)
         i_dists = _link_distances(robot, _INDEX_CHAIN, joint_cfg,
                                   _INDEX_COLLISION_LINKS,
                                   plane_normal_root, plane_centroid_root)
 
-        part6_dist   = i_dists.get('part_6', float('nan'))
-        xlhorn_dist  = i_dists.get('xl_platform_horn_1', float('nan'))
+        part6_entry  = i_dists.get('part_6', (float('nan'), 0, False))
+        part6_dist   = part6_entry[0]  # mm
+        xlhorn_entry = i_dists.get('xl_housing_1', (float('nan'), 0, False))
+        xlhorn_dist  = xlhorn_entry[0]  # mm
 
         # Mesh-level collision (only if hand GLB exists)
         mesh_col_str = "n/a"
@@ -213,12 +225,12 @@ def main():
             n_colliding = sum(1 for _, c in col_results if c)
             mesh_col_str = f"{n_colliding}/{len(col_results)} meshes"
 
-        print(f"{w:>8.1f}  {thumb_res*1000:>9.2f}mm  {index_res*1000:>9.2f}mm  "
+        print(f"{w:>8.0f}  {thumb_res*1000:>9.2f}mm  {index_res*1000:>9.2f}mm  "
               f"{part6_dist:>9.1f}mm  {xlhorn_dist:>11.1f}mm  {mesh_col_str:>12}")
 
     # Detailed per-link distances for the default weight
     default_w = _COLLISION_WEIGHT
-    print(f"\nDetailed link distances (weight={default_w}, frame {frame_idx}):")
+    print(f"\nDetailed proxy-point distances (weight={default_w}, frame {frame_idx}):")
     thumb_cfg, _ = _run_ik(
         robot, _THUMB_CHAIN, 'part_3', _THUMB_VISUAL_ORIGIN, index_target,
         _THUMB_COLLISION_LINKS, plane_normal_root, plane_centroid_root,
@@ -230,17 +242,19 @@ def main():
     joint_cfg = {**thumb_cfg, **index_cfg}
 
     print("  Thumb chain:")
-    for name, d in _link_distances(robot, _THUMB_CHAIN, joint_cfg,
-                                   _THUMB_COLLISION_LINKS,
-                                   plane_normal_root, plane_centroid_root).items():
+    for name, (d, lat, sup) in _link_distances(robot, _THUMB_CHAIN, joint_cfg,
+                                               _THUMB_COLLISION_LINKS,
+                                               plane_normal_root, plane_centroid_root).items():
+        sup_str = " [SUPPRESSED - off-side]" if sup else ""
         flag = " *** INSIDE HAND" if d < 0 else (" (within margin)" if d < 3 else "")
-        print(f"    {name:<30} {d:+.1f} mm{flag}")
+        print(f"    {name:<30} {d:+6.1f} mm  lateral={lat:.1f}mm{flag}{sup_str}")
     print("  Index chain:")
-    for name, d in _link_distances(robot, _INDEX_CHAIN, joint_cfg,
-                                   _INDEX_COLLISION_LINKS,
-                                   plane_normal_root, plane_centroid_root).items():
+    for name, (d, lat, sup) in _link_distances(robot, _INDEX_CHAIN, joint_cfg,
+                                               _INDEX_COLLISION_LINKS,
+                                               plane_normal_root, plane_centroid_root).items():
+        sup_str = " [SUPPRESSED - off-side]" if sup else ""
         flag = " *** INSIDE HAND" if d < 0 else (" (within margin)" if d < 3 else "")
-        print(f"    {name:<30} {d:+.1f} mm{flag}")
+        print(f"    {name:<30} {d:+6.1f} mm  lateral={lat:.1f}mm{flag}{sup_str}")
 
     if hand_glb.exists():
         print("\nMesh-level collision details (default weight):")

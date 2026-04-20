@@ -41,11 +41,35 @@ _JOINT_BOUNDS = {j: (-np.pi, np.pi) for j in
 _THUMB_COLLISION_LINKS = ['xl330_m077_t_1', 'xl_linkage_horn', 'part_2_1']
 _INDEX_COLLISION_LINKS = ['part_6', 'xl_housing_1', 'part_2', 'xl_linkage_horn_1']
 
-_COLLISION_MARGIN = 0.003   # penalise links within 3 mm of the dorsal plane
-_COLLISION_WEIGHT = 8.0     # scale of soft-constraint residual term
-# Weight rationale: IK residual is ~0.001–0.005 m.  A 3 mm penetration produces
-# a penalty of 8 * 0.003 = 0.024 m — roughly 5–24× the IK error, enough to
-# deter clipping without dominating the optimisation and breaking convergence.
+# ---------------------------------------------------------------------------
+# Virtual proxy points: the bottommost vertex of each tracked link's mesh
+# in the link's own local coordinate frame (found by minimising world-space Y
+# at the zero configuration, where Y-down MANO world means min Y = closest to
+# the dorsal surface).  Using the mesh hull rather than the link origin avoids
+# the "impossible penalty" problem where the joint axis sits structurally below
+# the dorsal plane regardless of joint angle.
+# ---------------------------------------------------------------------------
+_COLLISION_PROXIES = {
+    'xl330_m077_t_1':    np.array([ 0.00900, -0.02450, -0.00320]),
+    'xl_linkage_horn':   np.array([ 0.00300, -0.00297,  0.00716]),
+    'part_2_1':          np.array([-0.00496,  0.00250,  0.00061]),
+    'part_6':            np.array([-0.00832, -0.00090, -0.05431]),
+    'xl_housing_1':      np.array([ 0.01215, -0.02665,  0.00000]),
+    'part_2':            np.array([-0.00435,  0.00250,  0.00247]),
+    'xl_linkage_horn_1': np.array([ 0.01550, -0.00625,  0.00434]),
+}
+
+_COLLISION_MARGIN = 0.003   # penalise proxy points within 3 mm of the dorsal plane
+_COLLISION_WEIGHT = 2000.0  # quadratic scale factor
+# Quadratic penalty: WEIGHT * (MARGIN - dist)^2
+# At the boundary (dist = MARGIN): penalty = 0
+# At contact (dist = 0):          penalty = 2000 * (0.003)^2 = 0.018 m  ≈ IK residual
+# At 3 mm deep (dist = -0.003):   penalty = 2000 * (0.006)^2 = 0.072 m  ≈ 14× IK residual
+# This creates a "brick-wall" effect: barely touching costs roughly the same as
+# the IK error; deep clipping costs an order of magnitude more.
+
+_COLLISION_LATERAL_CUTOFF = 0.040  # 40 mm from plane centroid — suppress penalty for
+# links that have wrapped around the sides of the hand (off the dorsal surface).
 
 # Multi-start candidates for the first joint of each chain.
 # At revolute_5_0 = 0 (default), xl_platform_horn_1 sits 1.9 mm inside the
@@ -131,23 +155,37 @@ def _ik_finger(robot, chain_joints, tip_link_name, visual_origin,
         fk = robot.link_fk(cfg=dict(zip(chain_joints, q_vec)))
 
         ik_err = np.full(3, 1e6)
-        link_pos = {}
+        link_T = {}
         for link, T in fk.items():
             if link.name == tip_link_name:
                 ik_err = T[:3, :3] @ visual_origin + T[:3, 3] - target_in_root
             elif link.name in collision_links:
-                link_pos[link.name] = T[:3, 3]
+                link_T[link.name] = T
 
-        # Soft collision penalty: one term per tracked link
+        # Soft quadratic collision penalty using mesh proxy points.
+        # Each proxy offset (link-local) is rotated/translated to root frame via FK,
+        # giving the physical mesh bottom rather than the abstract joint origin.
+        # Penalty is suppressed for links that have moved laterally off the dorsal
+        # surface (more than LATERAL_CUTOFF from the plane centroid).
         penalty = np.zeros(n_penalty)
         if plane_normal_root is not None:
             for i, lname in enumerate(collision_links):
-                pos = link_pos.get(lname)
-                if pos is None:
+                T = link_T.get(lname)
+                if T is None:
                     continue
-                dist = float(np.dot(pos - plane_point_root, plane_normal_root))
-                if dist < _COLLISION_MARGIN:
-                    penalty[i] = _COLLISION_WEIGHT * (_COLLISION_MARGIN - dist)
+                proxy_local = _COLLISION_PROXIES.get(lname, np.zeros(3))
+                proxy_pos = T[:3, :3] @ proxy_local + T[:3, 3]
+                v = proxy_pos - plane_point_root
+                dist = float(np.dot(v, plane_normal_root))
+                if dist >= _COLLISION_MARGIN:
+                    continue
+                # Lateral distance from centroid (in the plane) — suppress if off the
+                # dorsal surface so we don't penalise linkages wrapping the hand sides.
+                lateral = float(np.linalg.norm(v - dist * plane_normal_root))
+                if lateral > _COLLISION_LATERAL_CUTOFF:
+                    continue
+                penetration = _COLLISION_MARGIN - dist
+                penalty[i] = _COLLISION_WEIGHT * (penetration ** 2)
 
         return np.concatenate([ik_err, penalty])
 
