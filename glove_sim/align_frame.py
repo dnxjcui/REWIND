@@ -12,8 +12,12 @@ from src.urdfpy_vis import ROOT_TO_HANDMOUNT_XYZ
 
 _THUMB_CHAIN = ['revolute_1_0', 'revolute_2_0', 'revolute_3_0', 'revolute_4_0']
 _INDEX_CHAIN = ['revolute_5_0', 'revolute_6_0', 'revolute_7_0', 'revolute_8_0', 'revolute_9_0']
-_THUMB_VISUAL_ORIGIN = np.array([-0.125132,  0.004875, -0.0466837])
-_INDEX_VISUAL_ORIGIN = np.array([-0.0674761, 0.004875, -0.0250619])
+# Dome-tip centroid in link-local frame, computed from STL vertex data
+# (centroid of vertices within 3 mm of the minimum-Z extreme = physical cap dome).
+# The URDF <visual><origin> was the STL frame origin, which sits ~12 cm outside
+# the actual mesh bounds and was causing the IK to drive a phantom point.
+_THUMB_VISUAL_ORIGIN = np.array([-0.00047,  0.0, -0.03095])
+_INDEX_VISUAL_ORIGIN = np.array([-0.00259,  0.0, -0.03085])
 
 # hand_mount → urdf root: negate the root→hand_mount offset (pure translation, no rotation)
 _HM_TO_ROOT = np.eye(4, dtype=np.float64)

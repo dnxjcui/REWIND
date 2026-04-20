@@ -313,8 +313,8 @@ class GloveSimulator:
         # Site offsets = visual origin of the fingertip cap links (from URDF visual elements).
         # These are the points with meaningful moment arms from the tip joints,
         # necessary for non-degenerate IK Jacobians.
-        thumb_site_pos  = "-0.125132 0.004875 -0.0466837"  # part_3 visual origin
-        index_site_pos  = "-0.0674761 0.004875 -0.0250619"  # part_3_1 visual origin
+        thumb_site_pos  = "-0.00047 0.0 -0.03095"   # dome-tip centroid, part_3
+        index_site_pos  = "-0.00259 0.0 -0.03085"   # dome-tip centroid, part_3_1
 
         return f"""
 <mujoco model="rewind_glove">
@@ -638,8 +638,8 @@ def _recursive_body(
     # These sites have a non-zero offset from the joint origin, giving a non-degenerate
     # Jacobian for the tip joints (revolute_4_0 and revolute_9_0).
     _FINGERTIP_SITES = {
-        "part_3":   ("thumb_tip_site",  "-0.125132 0.004875 -0.0466837"),
-        "part_3_1": ("index_tip_site",  "-0.0674761 0.004875 -0.0250619"),
+        "part_3":   ("thumb_tip_site",  "-0.00047 0.0 -0.03095"),
+        "part_3_1": ("index_tip_site",  "-0.00259 0.0 -0.03085"),
     }
     site_xml = ""
     if link_name in _FINGERTIP_SITES:
