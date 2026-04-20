@@ -143,7 +143,8 @@ def _check_mesh_collisions(robot, joint_cfg, T_root_world, hand_glb_path):
         # Apply MANO→GLB to bring glove into the same space as the hand mesh.
         glove_glb = mesh.copy()
         glove_glb.apply_transform(_MANO_TO_GLB)
-        collides, _ = manager.in_collision_single(glove_glb)
+        _r = manager.in_collision_single(glove_glb)
+        collides = _r[0] if isinstance(_r, tuple) else bool(_r)
         results.append((name, collides))
     return results
 

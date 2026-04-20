@@ -25,7 +25,8 @@ GLB_DIR = (
     / "knot_one_handed-all-shot-0-0--1/unity_export/frames"
 )
 
-ALIGNED_DIR = _GLOVE_SIM_ROOT / "outputs/aligned"
+ALIGNED_DIR       = _GLOVE_SIM_ROOT / "outputs/aligned"
+GOLDEN_SEED_PATH  = ALIGNED_DIR / "golden_seed.json"
 
 # Derive the video name from the NPZ path segment, e.g. "knot_one_handed".
 # Annotation JSONs stay at ALIGNED_DIR root (shared across runs of the same video).
