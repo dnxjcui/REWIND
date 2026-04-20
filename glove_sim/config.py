@@ -41,3 +41,12 @@ if _ANNOTATION_PATH.exists():
     )
 else:
     T_WRIST_TO_HM = np.eye(4, dtype=np.float64)  # identity until first annotation
+
+_FT_ANNOTATION_PATH = ALIGNED_DIR / "fingertip_annotation.json"
+if _FT_ANNOTATION_PATH.exists():
+    _ft = json.loads(_FT_ANNOTATION_PATH.read_text())
+    THUMB_TIP_OFFSET = np.array(_ft["thumb_tip_offset_wrist"], dtype=np.float64)
+    INDEX_TIP_OFFSET = np.array(_ft["index_tip_offset_wrist"], dtype=np.float64)
+else:
+    THUMB_TIP_OFFSET = np.zeros(3, dtype=np.float64)
+    INDEX_TIP_OFFSET = np.zeros(3, dtype=np.float64)

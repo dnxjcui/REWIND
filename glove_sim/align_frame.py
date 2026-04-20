@@ -61,6 +61,11 @@ def solve_ik_frame(robot, T_wrist, thumb_tip_world, index_tip_world,
     thumb_residual : float — Euclidean distance in metres
     index_residual : float — Euclidean distance in metres
     """
+    # Apply calibrated fingertip offsets (wrist-local → world)
+    R_w = T_wrist[:3, :3]
+    thumb_tip_world = thumb_tip_world + R_w @ cfg.THUMB_TIP_OFFSET
+    index_tip_world = index_tip_world + R_w @ cfg.INDEX_TIP_OFFSET
+
     # Apply calibrated wrist→hand_mount offset, then hand_mount→root
     T_root_world = T_wrist @ cfg.T_WRIST_TO_HM @ _HM_TO_ROOT
     inv_T = np.linalg.inv(T_root_world)
