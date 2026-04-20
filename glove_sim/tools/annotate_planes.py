@@ -44,6 +44,25 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "glove_sim"))
 import config as cfg
 
+_MANO_TO_GLB = np.diag([1.0, -1.0, -1.0, 1.0])
+
+
+def _load_right_hand_mesh(glb_path: Path, mano_centroid_world: np.ndarray) -> "trimesh.Trimesh":
+    """Load the hand GLB and return only the right-hand sub-mesh.
+
+    DynHaMR unity_export GLBs contain two sub-meshes (left and right hand).
+    We select the one whose centroid is closest to the expected right-hand
+    centroid under the MANO→GLB transform.
+    """
+    scene = trimesh.load(str(glb_path), force="scene")
+    geoms = list(scene.geometry.values())
+    if len(geoms) == 1:
+        return geoms[0]
+    expected = (_MANO_TO_GLB @ np.append(mano_centroid_world, 1.0))[:3]
+    best_idx = min(range(len(geoms)),
+                   key=lambda i: np.linalg.norm(geoms[i].vertices.mean(axis=0) - expected))
+    return geoms[best_idx]
+
 
 # ---------------------------------------------------------------------------
 # Math helpers
@@ -127,7 +146,7 @@ def compute_T_from_landmarks(T_wrist, T_wrist_to_hm_prev, glove_pts, hand_pts):
     T_offset    : (4,4) new T_WRIST_TO_HM (wrist-local)
     T_hm_new_glb: (4,4) new hand_mount-to-GLB transform (for downstream use)
     """
-    MANO_TO_GLB = np.diag([1.0, 1.0, -1.0, 1.0])
+    MANO_TO_GLB = np.diag([1.0, -1.0, -1.0, 1.0])
 
     # Current HM-to-GLB transform (where the glove was when the user annotated it)
     T_hm_curr_glb = MANO_TO_GLB @ T_wrist @ T_wrist_to_hm_prev
@@ -359,8 +378,14 @@ def main():
         if not hand_glb.exists():
             print(f"ERROR: hand GLB not found: {hand_glb}")
             sys.exit(1)
-        hand_scene = trimesh.load(str(hand_glb), force="scene")
-        hand_mesh  = trimesh.util.concatenate(list(hand_scene.geometry.values()))
+        # Use only the right-hand sub-mesh (GLB may contain both hands)
+        import smplx, torch
+        data  = np.load(str(cfg.NPZ_PATH), allow_pickle=False)
+        track = int(np.argmax(data["is_right"].mean(axis=1)))
+        hand_mesh = _load_right_hand_mesh(
+            hand_glb,
+            mano_centroid_world=frame_data["T_wrist"][:3, 3],
+        )
 
         print(f"Glove mesh: {len(glove_mesh.faces)} faces")
         print(f"Hand  mesh: {len(hand_mesh.faces)} faces")
@@ -409,7 +434,7 @@ def main():
 
     # ---- Residual (should be ~0 for 3-point exact fit) ----
     R, t = T_hm_new_glb[:3, :3], T_hm_new_glb[:3, 3]
-    MANO_TO_GLB = np.diag([1.0, 1.0, -1.0, 1.0])
+    MANO_TO_GLB = np.diag([1.0, -1.0, -1.0, 1.0])
     T_hm_curr   = MANO_TO_GLB @ T_wrist @ cfg.T_WRIST_TO_HM
     glove_pts   = np.asarray(glove_pts, dtype=float)
     hand_pts    = np.asarray(hand_pts,  dtype=float)

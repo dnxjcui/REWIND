@@ -156,9 +156,10 @@ def get_glove_scene(
     # World pose of URDF root (Y-down MuJoCo frame)
     T_root_world_yd = T_hand_mount_world @ T_hm_to_root
 
-    # MANO world → DynHaMR GLB coordinate system: negate Z axis.
-    # DynHaMR unity_export GLBs store vertices as (X, Y, -Z) relative to MANO world.
-    MANO_TO_GLB = np.diag([1.0, 1.0, -1.0, 1.0])
+    # MANO world → DynHaMR GLB coordinate system: negate Y and Z axes.
+    # DynHaMR unity_export GLBs store vertices as (X, -Y, -Z) relative to MANO world
+    # (Unity left-handed Y-up vs MANO right-handed Y-down).
+    MANO_TO_GLB = np.diag([1.0, -1.0, -1.0, 1.0])
 
     # urdfpy FK: {trimesh_mesh: T_4x4_from_urdf_root}
     fk = robot.visual_trimesh_fk(cfg=joint_cfg)

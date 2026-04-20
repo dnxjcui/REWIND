@@ -185,7 +185,7 @@ def test_finger_caps_in_glb_space_match_mano_fingertips(annotation):
     from align_frame import solve_ik_frame, _THUMB_CHAIN, _INDEX_CHAIN
     from align_frame import _THUMB_VISUAL_ORIGIN, _INDEX_VISUAL_ORIGIN
 
-    MANO_TO_GLB = np.diag([1.0, 1.0, -1.0, 1.0])
+    MANO_TO_GLB = np.diag([1.0, -1.0, -1.0, 1.0])
     HM_TO_ROOT  = np.eye(4); HM_TO_ROOT[:3, 3] = [0.157876, -0.0663838, 0.0660817]
 
     frame_idx = annotation["frame"]

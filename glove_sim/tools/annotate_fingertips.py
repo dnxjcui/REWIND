@@ -38,7 +38,19 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "glove_sim"))
 import config as cfg
 
-_MANO_TO_GLB = np.diag([1.0, 1.0, -1.0, 1.0])
+_MANO_TO_GLB = np.diag([1.0, -1.0, -1.0, 1.0])
+
+
+def _load_right_hand_mesh(glb_path: Path, mano_centroid_world: np.ndarray) -> "trimesh.Trimesh":
+    """Return only the right-hand sub-mesh from a DynHaMR unity_export GLB."""
+    scene = trimesh.load(str(glb_path), force="scene")
+    geoms = list(scene.geometry.values())
+    if len(geoms) == 1:
+        return geoms[0]
+    expected = (_MANO_TO_GLB @ np.append(mano_centroid_world, 1.0))[:3]
+    best_idx = min(range(len(geoms)),
+                   key=lambda i: np.linalg.norm(geoms[i].vertices.mean(axis=0) - expected))
+    return geoms[best_idx]
 
 
 # ---------------------------------------------------------------------------
@@ -282,8 +294,7 @@ def main():
         if not hand_glb.exists():
             print(f"ERROR: hand GLB not found: {hand_glb}")
             sys.exit(1)
-        hand_scene = trimesh.load(str(hand_glb), force="scene")
-        hand_mesh  = trimesh.util.concatenate(list(hand_scene.geometry.values()))
+        hand_mesh = _load_right_hand_mesh(hand_glb, mano_centroid_world=T_wrist[:3, 3])
 
         print(f"Glove mesh: {len(glove_mesh.faces)} faces")
         print(f"Hand  mesh: {len(hand_mesh.faces)} faces")
