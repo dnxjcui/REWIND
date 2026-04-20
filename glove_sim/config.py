@@ -1,8 +1,16 @@
 from pathlib import Path
+import json
+import numpy as np
+import numpy as np
 
-_ROOT = Path(__file__).parent
+_GLOVE_SIM_ROOT = Path(__file__).parent
+_PROJECT_ROOT   = _GLOVE_SIM_ROOT.parent
 
-DYNHAMR_ROOT = _ROOT.parent / "Dyn-HaMR"
+DYNHAMR_ROOT = _PROJECT_ROOT / "Dyn-HaMR"
+URDF_PATH    = _PROJECT_ROOT / "rewind_glove_assembly/urdf/rewind_glove_for_urdfpy.urdf"
+MJCF_PATH    = _PROJECT_ROOT / "rewind_glove_assembly/urdf/rewind_glove_mujoco.xml"
+MESH_DIR     = _PROJECT_ROOT / "rewind_glove_assembly/meshes"
+MANO_DIR     = DYNHAMR_ROOT / "_DATA/data"
 
 NPZ_PATH = (
     DYNHAMR_ROOT
@@ -17,87 +25,44 @@ GLB_DIR = (
     / "knot_one_handed-all-shot-0-0--1/unity_export/frames"
 )
 
-MANO_DIR = DYNHAMR_ROOT / "_DATA/data"  # smplx appends /mano automatically
+ALIGNED_DIR = _GLOVE_SIM_ROOT / "outputs/aligned"
 
-URDF_PATH     = _ROOT.parent / "rewind_glove_assembly/urdf/rewind_glove_assembly.urdf"
-MESH_DIR_SRC  = _ROOT.parent / "rewind_glove_assembly/meshes"  # CAD exports (often ASCII STL)
-MESH_DIR      = _ROOT / "assets/meshes"  # binary STL for MuJoCo; populate via convert_meshes_for_mujoco.py
+IK_TOL                = 1e-6   # scipy ftol
+IK_MAX_NFEV           = 200
+IK_RESIDUAL_THRESHOLD = 0.005  # 5 mm
 
-OUTPUT_DIR       = _ROOT / "outputs"
-FRAMES_DIR       = OUTPUT_DIR / "frames"
-SENSORS_NPZ_PATH = OUTPUT_DIR / "simulated_sensors.npz"
-CALIBRATION_PATH = OUTPUT_DIR / "calibration.npy"
+# Calibration loaded automatically from plane_annotation.json.
+# Re-run annotate_planes.py to update; no manual edits needed.
+_ANNOTATION_PATH = ALIGNED_DIR / "plane_annotation.json"
+if _ANNOTATION_PATH.exists():
+    _ann = json.loads(_ANNOTATION_PATH.read_text())
+    T_WRIST_TO_HM = np.array(_ann["T_WRIST_TO_HM"], dtype=np.float64)
 
-FPS           = 30
-IK_TOL        = 1e-4   # meters
-IK_ITERS      = 50
-SMOOTH_WINDOW = 5      # Savitzky-Golay window length (frames)
-IK_RESIDUAL_THRESHOLD = 0.01  # meters; frames above this are unreliable
+    # Dynamic per-frame Kabsch: anchor MANO vertex IDs and matching glove points
+    # in hand_mount local frame (MANO convention). Both are None if the annotation
+    # pre-dates this feature (re-run annotate_planes.py to populate them).
+    ANCHOR_VERTEX_IDS  = _ann.get("anchor_vertex_ids")          # list[int] or None
+    GLOVE_ANCHOR_PTS_HM = (
+        np.array(_ann["glove_anchor_pts_hm"], dtype=np.float64)
+        if "glove_anchor_pts_hm" in _ann else None
+    )
 
-# MANO joint indices (16 joints from DynHaMR pkl — no extra fingertip joints)
-JOINT_WRIST     = 0
-JOINT_INDEX_DIP = 3   # index3 (DIP joint) — used for finger orientation vector
-JOINT_THUMB_IP  = 15  # thumb3 (IP joint) — used for thumb orientation vector
+    # Hand dorsal plane for IK collision penalty (in GLB space).
+    _hd = _ann.get("hand_dorsal", {})
+    HAND_DORSAL_CENTROID_GLB = np.array(_hd.get("centroid", [0, 0, 0]), dtype=np.float64)
+    HAND_DORSAL_NORMAL_GLB   = np.array(_hd.get("normal",   [0, 1, 0]), dtype=np.float64)
+else:
+    T_WRIST_TO_HM            = np.eye(4, dtype=np.float64)
+    ANCHOR_VERTEX_IDS        = None
+    GLOVE_ANCHOR_PTS_HM      = None
+    HAND_DORSAL_CENTROID_GLB = np.zeros(3, dtype=np.float64)
+    HAND_DORSAL_NORMAL_GLB   = np.array([0.0, 1.0, 0.0], dtype=np.float64)
 
-# MANO vertex indices for fingertip surface positions (standard MANO right-hand vertices)
-# Used instead of joints since DynHaMR's pkl doesn't add extra fingertip joints.
-VERTEX_THUMB_TIP = 745
-VERTEX_INDEX_TIP = 317
-
-# Glove sensor joint names (from URDF) — 5 sensors total
-SENSOR_JOINTS = {
-    "thumb_base":     "revolute_3_0",  # part_1 → part_2_1 junction (thumb)
-    "thumb_tip":      "revolute_4_0",  # part_2_1 → part_3 (thumb cap)
-    "index_base":     "revolute_7_0",  # part_1_1 → part_2 junction (index)
-    "index_tip":      "revolute_9_0",  # part_2 → part_3_1 (index cap)
-    "index_platform": "revolute_5_0",  # index platform lateral sweep (near part_5)
-}
-
-# Sensor world-position data: (body_name, offset_in_body_local_frame).
-# All offsets are in the body's own local frame (rotated by R_body before adding to xpos).
-# After the visual Rx(180°) flip, screws face the -Y body direction; offset (0, -0.004, 0)
-# places the dot 4 mm in the -Y local direction = next to the screws.
-import numpy as _np
-SENSOR_POSITIONS = {
-    "thumb_base":     ("part_2_1", _np.array([0.0,  -0.004,  0.0])),   # Part1→Part2_1 junction
-    "thumb_tip":      ("part_3",   _np.array([0.0,  -0.004,  0.0])),   # geometric center of thumb cap
-    "index_base":     ("part_2",   _np.array([0.0,  -0.004,  0.0])),   # Part1_1→Part2 junction
-    "index_tip":      ("part_3_1", _np.array([0.0,  -0.004,  0.0])),   # geometric center of index cap
-    # part_5 vis_origin ≈ [0.014, 0.074, -0.004] places dot at the free end of the platform
-    "index_platform": ("part_5",   _np.array([0.014, 0.074, -0.004])),
-}
-del _np
-SENSOR_SPHERE_RADIUS = 0.005  # 5 mm
-
-# All revolute joints participating in IK for each finger
-THUMB_CHAIN  = ["revolute_1_0", "revolute_2_0", "revolute_3_0", "revolute_4_0"]
-INDEX_CHAIN  = ["revolute_5_0", "revolute_6_0", "revolute_7_0", "revolute_8_0", "revolute_9_0"]
-
-# Fingertip cap body names in the URDF
-THUMB_TIP_BODY = "part_3"
-INDEX_TIP_BODY = "part_3_1"
-
-# Link name → STL filename mapping (all 17 URDF links with visual geometry)
-LINK_TO_STL = {
-    "hand_mount":       "Hand Mount.stl",
-    "part_1":           "Part 1.stl",
-    "part_1_1":         "Part 1_1.stl",
-    "part_2":           "Part 2.stl",
-    "part_2_1":         "Part 2_1.stl",
-    "part_3":           "Part 3.stl",
-    "part_3_1":         "Part 3_1.stl",
-    "part_5":           "Part 5.stl",
-    "part_6":           "Part 6.stl",
-    "xl330_m077_t":     "XL330_M077_T.stl",
-    "xl330_m077_t_1":   "XL330_M077_T_1.stl",
-    "xl330_m077_t_2":   "XL330_M077_T_1.stl",
-    "xl330_m077_t_3":   "XL330_M077_T.stl",
-    "xl_housing":       "XL Housing.stl",
-    "xl_housing_1":     "XL Housing.stl",
-    "xl_housing_cap":   "XL Housing Cap.stl",
-    "xl_housing_cap_1": "XL Housing Cap.stl",
-    "xl_linkage_horn":  "XL Linkage Horn.stl",
-    "xl_linkage_horn_1":"XL Linkage Horn.stl",
-    "xl_platform_horn": "XL Platform Horn.stl",
-    "xl_platform_horn_1":"XL Platform Horn.stl",
-}
+_FT_ANNOTATION_PATH = ALIGNED_DIR / "fingertip_annotation.json"
+if _FT_ANNOTATION_PATH.exists():
+    _ft = json.loads(_FT_ANNOTATION_PATH.read_text())
+    THUMB_TIP_OFFSET = np.array(_ft["thumb_tip_offset_wrist"], dtype=np.float64)
+    INDEX_TIP_OFFSET = np.array(_ft["index_tip_offset_wrist"], dtype=np.float64)
+else:
+    THUMB_TIP_OFFSET = np.zeros(3, dtype=np.float64)
+    INDEX_TIP_OFFSET = np.zeros(3, dtype=np.float64)

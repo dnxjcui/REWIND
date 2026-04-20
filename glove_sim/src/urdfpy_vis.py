@@ -26,7 +26,7 @@ _robot_cache: dict = {}  # keyed by (urdf_path, mesh_dir)
 
 # Offset of hand_mount relative to URDF root link (from fixed_node_to_root_joint_0).
 # Used to convert hand_mount world pose (from MuJoCo) into URDF-root world pose.
-_ROOT_TO_HANDMOUNT_XYZ = np.array([-0.157876, 0.0663838, -0.0660817])
+ROOT_TO_HANDMOUNT_XYZ = np.array([-0.157876, 0.0663838, -0.0660817])
 
 
 def _package_mesh_to_basename(fn: str) -> str:
@@ -112,6 +112,18 @@ def load_robot(urdf_path: Path, mesh_dir: Path):
     return robot
 
 
+def hand_mount_world_pose_for_root_identity() -> np.ndarray:
+    """Return hand-mount world pose that places URDF root at identity (Y-down).
+
+    `get_glove_scene` expects the hand-mount world pose as input. A common mistake
+    is passing URDF-root identity directly, which visually detaches components.
+    This helper provides the correct rest pose for root-at-origin comparisons.
+    """
+    t = np.eye(4, dtype=float)
+    t[:3, 3] = ROOT_TO_HANDMOUNT_XYZ
+    return t
+
+
 def get_glove_scene(
     robot,
     joint_cfg: dict[str, float],
@@ -136,41 +148,38 @@ def get_glove_scene(
     # URDF root → hand_mount is a fixed joint with xyz offset (rpy=0).
     # Invert to get hand_mount → root, then combine with hand_mount world pose.
     T_root_to_hm = np.eye(4)
-    T_root_to_hm[:3, 3] = _ROOT_TO_HANDMOUNT_XYZ
+    T_root_to_hm[:3, 3] = ROOT_TO_HANDMOUNT_XYZ
 
     T_hm_to_root = np.eye(4)
-    T_hm_to_root[:3, 3] = -_ROOT_TO_HANDMOUNT_XYZ  # pure translation, no rotation
+    T_hm_to_root[:3, 3] = -ROOT_TO_HANDMOUNT_XYZ  # pure translation, no rotation
 
     # World pose of URDF root (Y-down MuJoCo frame)
     T_root_world_yd = T_hand_mount_world @ T_hm_to_root
 
-    # Y-down → Y-up coordinate flip for GLB export
-    YDOWN_TO_YUP = np.array([
-        [1,  0,  0,  0],
-        [0,  0,  1,  0],
-        [0, -1,  0,  0],
-        [0,  0,  0,  1],
-    ], dtype=float)
+    # MANO world → DynHaMR GLB coordinate system: negate Y and Z axes.
+    # DynHaMR unity_export GLBs store vertices as (X, -Y, -Z) relative to MANO world
+    # (Unity left-handed Y-up vs MANO right-handed Y-down).
+    MANO_TO_GLB = np.diag([1.0, -1.0, -1.0, 1.0])
 
     # urdfpy FK: {trimesh_mesh: T_4x4_from_urdf_root}
     fk = robot.visual_trimesh_fk(cfg=joint_cfg)
 
     meshes = []
     for mesh, T_from_root in fk.items():
-        # World transform in Y-down frame
+        # World transform in MANO world (Y-down) frame
         T_world_yd = T_root_world_yd @ T_from_root
-        # Convert to Y-up
-        T_world_yu = YDOWN_TO_YUP @ T_world_yd
+        # Convert to DynHaMR GLB space
+        T_world_glb = MANO_TO_GLB @ T_world_yd
 
         m = mesh.copy()
-        m.apply_transform(T_world_yu)
+        m.apply_transform(T_world_glb)
         meshes.append(m)
 
     # Red sensor spheres
     if sensor_positions_ydown is not None:
         for pos_yd in sensor_positions_ydown:
             pos_h = np.array([pos_yd[0], pos_yd[1], pos_yd[2], 1.0])
-            pos_yu = (YDOWN_TO_YUP @ pos_h)[:3]
+            pos_yu = (MANO_TO_GLB @ pos_h)[:3]
             sphere = trimesh.creation.icosphere(subdivisions=2, radius=sensor_sphere_radius)
             sphere.visual.face_colors = np.array([220, 20, 20, 255], dtype=np.uint8)
             T_s = np.eye(4)
