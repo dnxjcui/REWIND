@@ -124,52 +124,96 @@ def _export_frame(robot, T_wrist, joint_cfg, frame_idx):
     return out_path
 
 
+def _total_frames() -> int:
+    data = np.load(str(cfg.NPZ_PATH), allow_pickle=False)
+    return int(data["trans"].shape[1])
+
+
 def main():
     import argparse
     from src.urdfpy_vis import load_robot
     from src.mano_io import load_frame
 
-    parser = argparse.ArgumentParser(description="Phase 1 glove alignment — test frames only")
-    parser.add_argument("--frames", nargs="+", type=int, default=[0, 300])
+    parser = argparse.ArgumentParser(
+        description="Align glove URDF onto DynHaMR hand frames and export GLBs."
+    )
+    parser.add_argument(
+        "--frames", nargs="+", type=int, default=None,
+        help="Explicit list of frame indices to process. Mutually exclusive with --frames-test.",
+    )
+    parser.add_argument(
+        "--frames-test", action="store_true",
+        help="Quick test: run 10 evenly-spaced frames with strict assertions (no skipping).",
+    )
     args = parser.parse_args()
+
+    if args.frames is not None and args.frames_test:
+        parser.error("--frames and --frames-test are mutually exclusive.")
+
+    n_total = _total_frames()
+
+    if args.frames_test:
+        indices = [int(round(i * (n_total - 1) / 9)) for i in range(10)]
+        strict  = True
+        print(f"Test mode: {len(indices)} evenly-spaced frames out of {n_total} total.")
+    elif args.frames is not None:
+        indices = args.frames
+        strict  = True
+        print(f"Explicit frames: {indices}")
+    else:
+        indices = list(range(n_total))
+        strict  = False
+        print(f"Full sequence: {n_total} frames — failures will be skipped.")
 
     robot = load_robot(cfg.URDF_PATH, cfg.MESH_DIR)
     print(f"URDF loaded: {len(robot.links)} links, {len(robot.actuated_joints)} actuated joints")
 
     prev_q_thumb = None
     prev_q_index = None
-    out_paths = []
+    out_paths    = []
+    failed       = []
 
-    for frame_idx in args.frames:
-        print(f"\n--- Frame {frame_idx} ---")
-        frame = load_frame(cfg.NPZ_PATH, cfg.MANO_DIR, frame_idx)
+    for frame_idx in indices:
+        try:
+            frame = load_frame(cfg.NPZ_PATH, cfg.MANO_DIR, frame_idx)
 
-        joint_cfg, thumb_res, index_res = solve_ik_frame(
-            robot, frame["T_wrist"], frame["thumb_tip"], frame["index_tip"],
-            prev_q_thumb=prev_q_thumb, prev_q_index=prev_q_index,
-        )
-        print(f"  Thumb IK residual : {thumb_res*1000:.2f} mm")
-        print(f"  Index IK residual : {index_res*1000:.2f} mm")
+            joint_cfg, thumb_res, index_res = solve_ik_frame(
+                robot, frame["T_wrist"], frame["thumb_tip"], frame["index_tip"],
+                prev_q_thumb=prev_q_thumb, prev_q_index=prev_q_index,
+            )
 
-        _assert_frame(joint_cfg, thumb_res, index_res, frame_idx)
-        print(f"  Assertions passed.")
+            if strict:
+                _assert_frame(joint_cfg, thumb_res, index_res, frame_idx)
+                print(f"  [{frame_idx:05d}] thumb {thumb_res*1000:.1f}mm  "
+                      f"index {index_res*1000:.1f}mm  OK")
+            else:
+                _assert_frame(joint_cfg, thumb_res, index_res, frame_idx)
+                if frame_idx % 100 == 0:
+                    print(f"  [{frame_idx:05d}] thumb {thumb_res*1000:.1f}mm  "
+                          f"index {index_res*1000:.1f}mm")
 
-        out_path = _export_frame(robot, frame["T_wrist"], joint_cfg, frame_idx)
-        out_paths.append(out_path)
-        print(f"  GLB exported: {out_path}")
+            out_path = _export_frame(robot, frame["T_wrist"], joint_cfg, frame_idx)
+            out_paths.append(out_path)
 
-        prev_q_thumb = np.array([joint_cfg[j] for j in _THUMB_CHAIN])
-        prev_q_index = np.array([joint_cfg[j] for j in _INDEX_CHAIN])
+            prev_q_thumb = np.array([joint_cfg[j] for j in _THUMB_CHAIN])
+            prev_q_index = np.array([joint_cfg[j] for j in _INDEX_CHAIN])
+
+        except Exception as exc:
+            if strict:
+                raise
+            print(f"  [SKIP] Frame {frame_idx}: {exc}")
+            failed.append(frame_idx)
+            prev_q_thumb = None
+            prev_q_index = None
 
     print(f"\n{'='*60}")
-    print(f"All assertions passed for frames {args.frames}.")
-    print(f"\nGLBs written to:")
-    for p in out_paths:
-        print(f"  {p}")
-    print(f"\nOpen with:  f3d {out_paths[0]}")
-    print(f"\n*** STOP. Review the GLBs above visually. ***")
-    print(f"*** Only run align_sequence.py after confirming the ***")
-    print(f"*** glove alignment looks correct. ***")
+    print(f"Done. {len(out_paths)} frames exported, {len(failed)} skipped.")
+    if failed:
+        print(f"Failed frames: {failed}")
+    if out_paths:
+        print(f"\nFirst GLB: {out_paths[0]}")
+        if strict:
+            print(f"\n*** STOP. Review the GLBs above visually before processing the full sequence. ***")
     print(f"{'='*60}")
 
 
