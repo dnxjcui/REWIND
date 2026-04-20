@@ -67,4 +67,5 @@ def load_frame(npz_path, mano_dir, frame_idx: int) -> dict:
         "T_wrist":   T_wrist,
         "thumb_tip": vertices[745].copy(),
         "index_tip": vertices[317].copy(),
+        "vertices":  vertices,            # (778, 3) full MANO mesh, MANO world space
     }

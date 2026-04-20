@@ -349,11 +349,12 @@ def main():
             print(f"ERROR: no annotation at {args.out}")
             sys.exit(1)
         print(f"Loading existing annotation from {args.out} …")
-        existing    = json.loads(args.out.read_text())
-        T_wrist     = np.array(existing["T_wrist"], dtype=float)
-        glove_pts   = np.array(existing["glove_landmarks"], dtype=float)
-        hand_pts    = np.array(existing["hand_landmarks"],  dtype=float)
-        frame_idx   = existing["frame"]
+        existing           = json.loads(args.out.read_text())
+        T_wrist            = np.array(existing["T_wrist"], dtype=float)
+        glove_pts          = np.array(existing["glove_landmarks"], dtype=float)
+        hand_pts           = np.array(existing["hand_landmarks"],  dtype=float)
+        frame_idx          = existing["frame"]
+        anchor_vertex_ids  = existing.get("anchor_vertex_ids", [0, 0, 0])
     else:
         # ---- Load meshes ----
         print("Loading MANO frame data …")
@@ -415,6 +416,17 @@ def main():
                          "Phase 2/2 — HAND: wrist-centre, index-knuckle, pinky-knuckle"),
             "Phase 2")
 
+        # Find nearest MANO vertex to each clicked hand point (GLB mesh preserves
+        # MANO vertex ordering, so vertex index == MANO vertex ID).
+        anchor_vertex_ids = [
+            int(np.argmin(np.linalg.norm(hand_mesh.vertices - pt, axis=1)))
+            for pt in hand_pts
+        ]
+        print(f"\nAnchor MANO vertex IDs: {anchor_vertex_ids}")
+        for i, vid in enumerate(anchor_vertex_ids):
+            dist_mm = float(np.linalg.norm(hand_mesh.vertices[vid] - hand_pts[i])) * 1000
+            print(f"  pt{i+1}: vertex {vid}  (snap dist {dist_mm:.1f} mm)")
+
         T_wrist   = np.array(frame_data["T_wrist"], dtype=float)
         frame_idx = args.frame
 
@@ -460,12 +472,29 @@ def main():
     print(f"Glove bottom → dorsal gap   : {gap_mm:.1f} mm  (target < 5 mm)")
     print(f"{'='*60}")
 
+    # ---- Glove anchor points in HM local frame (MANO world convention) ----
+    # Needed for dynamic per-frame Kabsch in align_frame.py:
+    #   source = glove_anchor_pts_hm (constant, in HM local)
+    #   target = vertices[anchor_vertex_ids] per frame (MANO world)
+    # T_hm_world_mano maps HM local → MANO world.
+    T_hm_world_mano = T_wrist @ T_offset          # T_offset == T_WRIST_TO_HM (new)
+    inv_T_hm = np.linalg.inv(T_hm_world_mano)
+    MANO_TO_GLB = _MANO_TO_GLB
+    glove_anchor_pts_hm = []
+    for pt_glb in glove_pts:
+        pt_mano = (MANO_TO_GLB @ np.append(pt_glb, 1.0))[:3]
+        pt_hm   = (inv_T_hm @ np.append(pt_mano, 1.0))[:3]
+        glove_anchor_pts_hm.append(pt_hm.tolist())
+
     # ---- Save ----
     annotation = {
         "frame":            frame_idx,
         "T_wrist":          T_wrist.tolist(),
         "glove_landmarks":  glove_pts.tolist(),
         "hand_landmarks":   hand_pts.tolist(),
+        # Dynamic Kabsch fields
+        "anchor_vertex_ids":    anchor_vertex_ids,
+        "glove_anchor_pts_hm":  glove_anchor_pts_hm,
         # Fields consumed by test_plane_alignment.py
         "glove_bottom": {
             "points":   glove_pts.tolist(),

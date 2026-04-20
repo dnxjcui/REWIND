@@ -31,16 +31,32 @@ IK_TOL                = 1e-6   # scipy ftol
 IK_MAX_NFEV           = 200
 IK_RESIDUAL_THRESHOLD = 0.005  # 5 mm
 
-# T_WRIST_TO_HM is loaded automatically from plane_annotation.json.
-# Re-run annotate_planes.py to update it; no manual edits needed.
+# Calibration loaded automatically from plane_annotation.json.
+# Re-run annotate_planes.py to update; no manual edits needed.
 _ANNOTATION_PATH = ALIGNED_DIR / "plane_annotation.json"
 if _ANNOTATION_PATH.exists():
-    T_WRIST_TO_HM = np.array(
-        json.loads(_ANNOTATION_PATH.read_text())["T_WRIST_TO_HM"],
-        dtype=np.float64,
+    _ann = json.loads(_ANNOTATION_PATH.read_text())
+    T_WRIST_TO_HM = np.array(_ann["T_WRIST_TO_HM"], dtype=np.float64)
+
+    # Dynamic per-frame Kabsch: anchor MANO vertex IDs and matching glove points
+    # in hand_mount local frame (MANO convention). Both are None if the annotation
+    # pre-dates this feature (re-run annotate_planes.py to populate them).
+    ANCHOR_VERTEX_IDS  = _ann.get("anchor_vertex_ids")          # list[int] or None
+    GLOVE_ANCHOR_PTS_HM = (
+        np.array(_ann["glove_anchor_pts_hm"], dtype=np.float64)
+        if "glove_anchor_pts_hm" in _ann else None
     )
+
+    # Hand dorsal plane for IK collision penalty (in GLB space).
+    _hd = _ann.get("hand_dorsal", {})
+    HAND_DORSAL_CENTROID_GLB = np.array(_hd.get("centroid", [0, 0, 0]), dtype=np.float64)
+    HAND_DORSAL_NORMAL_GLB   = np.array(_hd.get("normal",   [0, 1, 0]), dtype=np.float64)
 else:
-    T_WRIST_TO_HM = np.eye(4, dtype=np.float64)  # identity until first annotation
+    T_WRIST_TO_HM            = np.eye(4, dtype=np.float64)
+    ANCHOR_VERTEX_IDS        = None
+    GLOVE_ANCHOR_PTS_HM      = None
+    HAND_DORSAL_CENTROID_GLB = np.zeros(3, dtype=np.float64)
+    HAND_DORSAL_NORMAL_GLB   = np.array([0.0, 1.0, 0.0], dtype=np.float64)
 
 _FT_ANNOTATION_PATH = ALIGNED_DIR / "fingertip_annotation.json"
 if _FT_ANNOTATION_PATH.exists():
