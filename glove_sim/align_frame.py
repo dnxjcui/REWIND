@@ -74,13 +74,15 @@ def solve_ik_frame(robot, T_wrist, thumb_tip_world, index_tip_world,
     T_root_world = T_wrist @ cfg.T_WRIST_TO_HM @ _HM_TO_ROOT
     inv_T = np.linalg.inv(T_root_world)
 
+    # Note: MANO thumb (v745) → index chain (part_3_1); MANO index (v317) → thumb chain (part_3).
+    # The glove's physical thumb cap is on the part_3_1/INDEX_CHAIN side and vice versa.
     thumb_target = (inv_T @ np.append(thumb_tip_world, 1.0))[:3]
     index_target = (inv_T @ np.append(index_tip_world, 1.0))[:3]
 
     thumb_cfg, thumb_res = _ik_finger(
-        robot, _THUMB_CHAIN, 'part_3',   _THUMB_VISUAL_ORIGIN, thumb_target, prev_q_thumb)
+        robot, _THUMB_CHAIN, 'part_3',   _THUMB_VISUAL_ORIGIN, index_target, prev_q_thumb)
     index_cfg, index_res = _ik_finger(
-        robot, _INDEX_CHAIN, 'part_3_1', _INDEX_VISUAL_ORIGIN, index_target, prev_q_index)
+        robot, _INDEX_CHAIN, 'part_3_1', _INDEX_VISUAL_ORIGIN, thumb_target, prev_q_index)
 
     return {**thumb_cfg, **index_cfg}, thumb_res, index_res
 

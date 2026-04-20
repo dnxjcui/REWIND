@@ -356,22 +356,17 @@ def main():
         frame_idx   = existing["frame"]
     else:
         # ---- Load meshes ----
-        print("Loading MANO frame data and computing IK …")
+        print("Loading MANO frame data …")
         from src.urdfpy_vis import load_robot, get_glove_scene
         from src.mano_io    import load_frame
-        from align_frame    import solve_ik_frame
 
         frame_data = load_frame(cfg.NPZ_PATH, cfg.MANO_DIR, args.frame)
         robot      = load_robot(cfg.URDF_PATH, cfg.MESH_DIR)
-        joint_cfg, _, _ = solve_ik_frame(
-            robot,
-            frame_data["T_wrist"],
-            frame_data["thumb_tip"],
-            frame_data["index_tip"],
-        )
 
         T_hand_mount = frame_data["T_wrist"] @ cfg.T_WRIST_TO_HM
-        glove_scene  = get_glove_scene(robot, joint_cfg, T_hand_mount)
+        # Render glove at resting (zero-joint) pose — landmark points are on the
+        # base/knuckle structure which doesn't move with finger joints anyway.
+        glove_scene  = get_glove_scene(robot, {}, T_hand_mount)
         glove_mesh   = trimesh.util.concatenate(list(glove_scene.geometry.values()))
 
         hand_glb = cfg.GLB_DIR / f"{args.frame:06d}_hands.glb"

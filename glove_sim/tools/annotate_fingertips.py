@@ -278,16 +278,12 @@ def main():
     else:
         # ---- Build meshes ----
         from src.urdfpy_vis import load_robot, get_glove_scene
-        from align_frame    import solve_ik_frame
 
-        robot     = load_robot(cfg.URDF_PATH, cfg.MESH_DIR)
-        joint_cfg, _, _ = solve_ik_frame(
-            robot, T_wrist,
-            frame_data["thumb_tip"],
-            frame_data["index_tip"],
-        )
+        robot        = load_robot(cfg.URDF_PATH, cfg.MESH_DIR)
         T_hand_mount = T_wrist @ cfg.T_WRIST_TO_HM
-        glove_scene  = get_glove_scene(robot, joint_cfg, T_hand_mount)
+        # Render glove at resting (zero-joint) pose so caps are clearly separated
+        # and finger identity is unambiguous regardless of which frame is loaded.
+        glove_scene  = get_glove_scene(robot, {}, T_hand_mount)
         glove_mesh   = trimesh.util.concatenate(list(glove_scene.geometry.values()))
 
         hand_glb = cfg.GLB_DIR / f"{args.frame:06d}_hands.glb"
